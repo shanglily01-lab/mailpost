@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { mutateState } from "@/lib/store";
 import * as actions from "@/lib/actions";
+import { ensureTicker } from "@/lib/ticker";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -16,6 +17,7 @@ export async function POST(req: Request) {
   }
 
   try {
+    ensureTicker();
     const payload = await mutateState(async (state) => {
       const p = body.payload ?? {};
       switch (body.action) {
@@ -84,8 +86,18 @@ export async function POST(req: Request) {
           return actions.launchCampaign(state, String(p.id ?? ""));
         case "pauseCampaign":
           return actions.pauseCampaign(state, String(p.id ?? ""), Boolean(p.resume));
+        case "cancelBlast":
+          return actions.cancelBlast(state, String(p.id ?? ""));
+        case "startBulk":
+          return actions.startBulk(state, {
+            mailboxId: String(p.mailboxId ?? ""),
+            contactIds: Array.isArray(p.contactIds) ? (p.contactIds as string[]) : [],
+            subject: String(p.subject ?? ""),
+            body: String(p.body ?? ""),
+            name: p.name ? String(p.name) : undefined,
+          });
         case "processQueue":
-          return actions.processQueue(state, Number(p.limit ?? 8));
+          return actions.processQueue(state, Number(p.limit ?? 1));
         case "sendOnce":
           return actions.sendOnce(state, {
             mailboxId: String(p.mailboxId ?? ""),

@@ -327,6 +327,7 @@ export function createCampaign(
   const row: Campaign = {
     id: nid(),
     name: input.name.trim() || "未命名活动",
+    kind: "sequence",
     sequenceId: input.sequenceId,
     mailboxIds: input.mailboxIds,
     contactIds: input.contactIds,
@@ -469,9 +470,127 @@ export function launchCampaign(state: AppState, campaignId: string): ActionResul
 
 export function pauseCampaign(state: AppState, campaignId: string, resume = false): ActionResult {
   const campaign = state.campaigns.find((c) => c.id === campaignId);
-  if (!campaign) return { ok: false, error: "活动不存在。" };
+  if (!campaign) return { ok: false, error: "群发任务不存在。" };
   campaign.status = resume ? "running" : "paused";
-  return { ok: true, message: resume ? "已恢复。" : "已暂停。" };
+  return { ok: true, message: resume ? "已继续排队发送。" : "已暂停，剩余的不会发出。" };
+}
+
+export function cancelBlast(state: AppState, campaignId: string): ActionResult {
+  const campaign = state.campaigns.find((c) => c.id === campaignId);
+  if (!campaign) return { ok: false, error: "群发任务不存在。" };
+  campaign.status = campaign.status === "running" || campaign.status === "paused" ? "paused" : campaign.status;
+  let n = 0;
+  for (const job of state.jobs.filter((j) => j.campaignId === campaignId && j.status === "queued")) {
+    job.status = "skipped";
+    job.blockReason = "已取消";
+    n += 1;
+  }
+  if (!state.jobs.some((j) => j.campaignId === campaignId && j.status === "queued")) {
+    campaign.status = "completed";
+  }
+  pushLog(state, "warn", "群发已取消", `${campaign.name} · 取消剩余 ${n} 封`);
+  return { ok: true, message: n ? `已取消剩余 ${n} 封。` : "没有排队中的信件。" };
+}
+
+function isBulkCampaign(campaign: Campaign): boolean {
+  return campaign.kind === "bulk" || Boolean(campaign.subject && !campaign.sequenceId);
+}
+
+export async function startBulk(
+  state: AppState,
+  input: { mailboxId: string; contactIds: string[]; subject: string; body: string; name?: string },
+): Promise<ActionResult> {
+  const subject = input.subject.trim();
+  const body = input.body.trim();
+  if (!subject || !body) return { ok: false, error: "标题和正文都要填。" };
+
+  const mailbox0 = state.mailboxes.find((m) => m.id === input.mailboxId);
+  if (!mailbox0) return { ok: false, error: "请选择发件邮箱。" };
+  if (!canLiveSend(mailbox0)) return { ok: false, error: "这个邮箱还没配好真实 SMTP（主机 + 授权码）。" };
+
+  const now = new Date();
+  const mailbox = resetSentToday(mailbox0, now);
+  Object.assign(mailbox0, mailbox);
+  const cap = mailboxEffectiveCap(mailbox0, now);
+  const left = Math.max(0, cap - mailbox0.sentToday);
+
+  const seen = new Set<string>();
+  const sendable: Contact[] = [];
+  const skipped: string[] = [];
+  for (const id of input.contactIds) {
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const contact = state.contacts.find((c) => c.id === id);
+    if (!contact) {
+      skipped.push("有联系人已被删除");
+      continue;
+    }
+    if (contact.unsubscribed || contact.suppressed) {
+      skipped.push(`${contact.email} 已退订或在抑制名单`);
+      continue;
+    }
+    if (contact.source === "purchased") {
+      skipped.push(`${contact.email} 来自购买名单，拒绝发送`);
+      continue;
+    }
+    sendable.push(contact);
+  }
+
+  if (!sendable.length) return { ok: false, error: "没有可发的联系人。退订、抑制和购买名单会被跳过。" };
+  if (sendable.length > IMPORT_ROW_CAP) {
+    return { ok: false, error: `一次最多 ${IMPORT_ROW_CAP} 人，请拆开再发。` };
+  }
+
+  const campaign: Campaign = {
+    id: nid(),
+    name: input.name?.trim() || subject.slice(0, 24) || "群发",
+    sequenceId: "",
+    mailboxIds: [mailbox0.id],
+    contactIds: sendable.map((c) => c.id),
+    status: "running",
+    killReason: "",
+    createdAt: nowISO(),
+    launchedAt: nowISO(),
+    kind: "bulk",
+    subject,
+    body,
+  };
+  state.campaigns.push(campaign);
+
+  for (const contact of sendable) {
+    const rendered = renderTemplate(subject, contact);
+    state.jobs.push(
+      newJob({
+        campaignId: campaign.id,
+        contactId: contact.id,
+        mailboxId: mailbox0.id,
+        stepIndex: 0,
+        scheduledAt: nowISO(),
+        sentAt: null,
+        status: "queued",
+        bounceType: null,
+        blockReason: "",
+        subject: rendered,
+        preview: body.slice(0, 180),
+      }),
+    );
+  }
+
+  const skipNote = skipped.length ? `跳过 ${skipped.length} 人。` : "";
+  pushLog(
+    state,
+    "ok",
+    "群发已排队",
+    `${campaign.name} · ${sendable.length} 人 · 今日额度还剩 ${left} 封。${skipNote}`,
+  );
+
+  const tick = await processQueue(state, 1);
+  const remain = state.jobs.filter((j) => j.campaignId === campaign.id && j.status === "queued").length;
+  return {
+    ok: true,
+    message: `已排队 ${sendable.length} 人。${skipNote}今日还能发 ${left} 封，多出的次日自动继续。约每 25 秒发一封。${tick.message ?? ""}剩余排队 ${remain}。`,
+    data: { id: campaign.id, queued: sendable.length, skipped: skipped.length, todayLeft: left },
+  };
 }
 
 export async function processQueue(state: AppState, limit = 8): Promise<ActionResult> {
@@ -503,6 +622,7 @@ export async function processQueue(state: AppState, limit = 8): Promise<ActionRe
       job.blockReason = "数据缺失";
       continue;
     }
+    if (campaign.status === "paused") continue;
     if (campaign.status !== "running") {
       job.status = "skipped";
       job.blockReason = "活动未运行";
@@ -510,6 +630,49 @@ export async function processQueue(state: AppState, limit = 8): Promise<ActionRe
     }
     const mailbox = resetSentToday(mailbox0, now);
     Object.assign(mailbox0, mailbox);
+
+    if (contact.unsubscribed || contact.suppressed) {
+      job.status = "skipped";
+      job.blockReason = "已退订或抑制";
+      continue;
+    }
+
+    const cap = mailboxEffectiveCap(mailbox0, now);
+    if (cap <= 0 || mailbox0.sentToday >= cap) continue;
+
+    if (isBulkCampaign(campaign)) {
+      if (!canLiveSend(mailbox0)) {
+        job.status = "blocked";
+        job.blockReason = "SMTP 未配置";
+        blocked += 1;
+        continue;
+      }
+      const subjectRendered = renderTemplate(campaign.subject || job.subject, contact);
+      const fullBody = `${renderTemplate(campaign.body || "", contact)}\n${complianceFooter(state.settings, unsubUrl(state, contact))}`;
+      try {
+        await deliver({
+          state,
+          mailbox: mailbox0,
+          contact,
+          subject: subjectRendered,
+          body: fullBody,
+          forceLive: true,
+        });
+      } catch (err) {
+        job.status = "blocked";
+        job.blockReason = err instanceof Error ? err.message : "SMTP 失败";
+        blocked += 1;
+        continue;
+      }
+      job.status = "sent";
+      job.sentAt = nowISO();
+      job.subject = subjectRendered;
+      job.preview = (campaign.body || "").slice(0, 180);
+      mailbox0.sentToday += 1;
+      sent += 1;
+      continue;
+    }
+
     const domain = domainOf(state, mailbox0);
     const sequence = state.sequences.find((s) => s.id === campaign.sequenceId);
     const step = sequence?.steps[job.stepIndex];
@@ -547,17 +710,19 @@ export async function processQueue(state: AppState, limit = 8): Promise<ActionRe
     sent += 1;
   }
 
-  for (const c of state.campaigns.filter((x) => x.status === "running")) {
+  for (const c of state.campaigns.filter((x) => x.status === "running" || x.status === "paused")) {
     const related = state.jobs.filter((j) => j.campaignId === c.id);
     if (related.length && related.every((j) => j.status !== "queued")) {
       c.status = "completed";
     }
   }
 
-  pushLog(state, "info", "队列已处理", `投递 ${sent}，拦截 ${blocked}。`);
+  if (sent > 0 || blocked > 0) {
+    pushLog(state, sent > 0 ? "ok" : "warn", "队列已处理", `投递 ${sent}，拦截 ${blocked}。`);
+  }
   return {
     ok: true,
-    message: `本轮投递 ${sent} 封，拦截 ${blocked} 封。`,
+    message: sent || blocked ? `本轮投递 ${sent} 封，拦截 ${blocked} 封。` : "本轮没有可发的信（额度用完则等到明天）。",
     data: { sent, blocked, remaining: state.jobs.filter((j) => j.status === "queued").length },
   };
 }

@@ -76,7 +76,16 @@ export function sanitizeState(state: AppState): boolean {
 
   const contactIds = new Set(state.contacts.map((c) => c.id));
   state.jobs = state.jobs.filter((j) => mailboxIds.has(j.mailboxId) && (j.campaignId === "direct" || contactIds.has(j.contactId)));
-  state.campaigns = [];
+  state.campaigns = (state.campaigns || []).filter(
+    (c) =>
+      c.mailboxIds.some((id) => mailboxIds.has(id)) &&
+      !/北境|Northbound|demo|采购痛点/i.test(c.name),
+  );
+  for (const c of state.campaigns) {
+    if (!c.kind) c.kind = c.subject ? "bulk" : "sequence";
+    if (c.subject === undefined) c.subject = "";
+    if (c.body === undefined) c.body = "";
+  }
   state.sequences = state.sequences.filter((s) => !s.name.includes("采购痛点") && !s.name.includes("北境"));
 
   if (/北境|Northbound/i.test(state.settings.companyName)) {
@@ -88,7 +97,7 @@ export function sanitizeState(state: AppState): boolean {
   state.settings.primaryDomain = "gmail.com";
   state.settings.sandboxMode = false;
 
-  const keepTitles = new Set(["已发送", "已添加邮箱", "话术已保存", "联系人已添加"]);
+  const keepTitles = new Set(["已发送", "已添加邮箱", "话术已保存", "联系人已添加", "群发已排队", "队列已处理", "群发已取消"]);
   state.activity = state.activity.filter(
     (a) => keepTitles.has(a.title) && !/northbound|北境|getnorthbound|try-northbound|ironvale|example/i.test(a.detail),
   );

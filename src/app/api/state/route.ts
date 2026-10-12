@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { loadState } from "@/lib/store";
+import { ensureTicker } from "@/lib/ticker";
 import { buildOverview } from "@/lib/stats";
 import { mailboxEffectiveCap, resetSentToday } from "@/lib/safety";
 import { warmupDayNumber, warmupProgress } from "@/lib/warmup";
@@ -8,6 +9,7 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export async function GET() {
+  ensureTicker();
   const state = loadState();
   const now = new Date();
   const mailboxes = state.mailboxes.map((m) => {

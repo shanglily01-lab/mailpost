@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import { useMailpost } from "@/lib/client";
 import { Banner, PageHead, Stamp } from "@/components/ui";
 
@@ -13,13 +14,31 @@ const jobTone = {
   blocked: "amber",
 } as const;
 
+const jobLabel = {
+  queued: "排队",
+  sent: "已发送",
+  bounced: "退信",
+  replied: "已回复",
+  unsubscribed: "已退订",
+  skipped: "跳过",
+  blocked: "失败",
+} as const;
+
 export default function ActivityPage() {
-  const { state, error, notice, mutate } = useMailpost();
+  const { state, error, notice, mutate, refresh } = useMailpost();
+  const queued = Boolean(state?.jobs.some((j) => j.status === "queued"));
+  useEffect(() => {
+    if (!queued) return;
+    const t = setInterval(() => {
+      refresh().catch(() => undefined);
+    }, 8000);
+    return () => clearInterval(t);
+  }, [queued, refresh]);
   if (!state) return <div className="p-10 text-mist">{error || "加载中…"}</div>;
 
   return (
     <>
-      <PageHead kicker="05 / 已发送" title="发送记录" desc="这里只留下你实际发出去的信。" />
+      <PageHead kicker="06 / 已发送" title="发送记录" desc="单封和群发队列都在这里。排队中的会按日限额陆续变成已发送。" />
       {error ? <Banner kind="danger">{error}</Banner> : null}
       {notice ? <Banner kind="ok">{notice}</Banner> : null}
 
@@ -45,7 +64,7 @@ export default function ActivityPage() {
                     <tr key={j.id}>
                       <td className="num text-[12px]">{(j.sentAt || j.scheduledAt).replace("T", " ").slice(0, 16)}</td>
                       <td>
-                        <Stamp tone={jobTone[j.status]}>{j.status}</Stamp>
+                        <Stamp tone={jobTone[j.status]}>{jobLabel[j.status]}</Stamp>
                       </td>
                       <td>
                         <div>{j.subject}</div>

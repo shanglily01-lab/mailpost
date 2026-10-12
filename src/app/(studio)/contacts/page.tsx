@@ -18,7 +18,7 @@ export default function ContactsPage() {
 
   return (
     <>
-      <PageHead kicker="03 / 联系人" title="你自己加的名单" desc="没有演示数据。在这里添加收件人，写信页可以直接选用。" />
+      <PageHead kicker="04 / 联系人" title="你自己加的名单" desc="没有演示数据。写信可以单选，群发可以勾一批人。" />
       {error ? <Banner kind="danger">{error}</Banner> : null}
       {notice ? <Banner kind="ok">{notice}</Banner> : null}
 

@@ -22,7 +22,7 @@ const mono = IBM_Plex_Mono({
 
 export const metadata: Metadata = {
   title: "MailPost · 精耕细作外投工作台",
-  description: "隔离域名、养号、验真、日限额与合规熔断。不是群发器。",
+  description: "用 Gmail SMTP 写信和按日限额排队群发。",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

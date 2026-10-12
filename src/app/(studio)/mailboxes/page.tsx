@@ -20,7 +20,7 @@ export default function MailboxesPage() {
   return (
     <>
       <PageHead
-        kicker="02 / Gmail"
+        kicker="03 / Gmail"
         title="接入发信 Gmail"
         desc="只走 Gmail SMTP。密码填 16 位应用专用密码，不是登录密码。新号前 3 天每天最多 5 封。"
       />

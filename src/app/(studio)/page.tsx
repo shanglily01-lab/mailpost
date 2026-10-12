@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useMailpost } from "@/lib/client";
 import { Banner, Field, PageHead } from "@/components/ui";
 
@@ -65,7 +66,7 @@ export default function ComposePage() {
 
   return (
     <>
-      <PageHead kicker="01 / 写信" title="用 Gmail 发一封" desc="选联系人或手填地址，可套用已保存的话术。标题正文改完可再存回去。" />
+      <PageHead kicker="01 / 写信" title="用 Gmail 发一封" desc="选联系人或手填地址，可套用已保存的话术。要发给多人，到「群发」按日限额排队。" />
       {error ? <Banner kind="danger">{error}</Banner> : null}
       {notice ? <Banner kind="ok">{notice}</Banner> : null}
 
@@ -133,6 +134,9 @@ export default function ComposePage() {
           <button className="btn" type="button" disabled={busy || !subject || !body} onClick={saveScript}>
             {scriptId ? "更新话术" : "存为话术"}
           </button>
+          <Link className="btn" href="/blast">
+            群发多人
+          </Link>
           <span className="num text-sm text-mist">{box ? `今日剩余 ${left}/${box.effectiveCap}` : ""}</span>
         </div>
       </form>

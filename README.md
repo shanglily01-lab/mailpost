@@ -1,6 +1,6 @@
 # MailPost
 
-用 Gmail SMTP 发信的本地工作台。完整步骤见 [docs/操作手册.md](docs/操作手册.md)。AWS Linux 部署（端口 5006）见 [docs/部署文档.md](docs/部署文档.md)。
+用 Gmail SMTP 发信的本地工作台：单封写信，或勾选联系人按日限额排队群发。完整步骤见 [docs/操作手册.md](docs/操作手册.md)。AWS Linux 部署（端口 5006）见 [docs/部署文档.md](docs/部署文档.md)。
 
 ```bash
 npm install

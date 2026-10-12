@@ -111,6 +111,8 @@ export type Sequence = {
   updatedAt: string;
 };
 
+export type CampaignKind = "bulk" | "sequence";
+
 export type Campaign = {
   id: string;
   name: string;
@@ -121,6 +123,9 @@ export type Campaign = {
   killReason: string;
   createdAt: string;
   launchedAt: string | null;
+  kind?: CampaignKind;
+  subject?: string;
+  body?: string;
 };
 
 export type SendJob = {

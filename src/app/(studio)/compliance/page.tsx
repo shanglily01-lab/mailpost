@@ -30,7 +30,7 @@ export default function CompliancePage() {
 
   return (
     <>
-      <PageHead kicker="06 / 设置" title="签名和退订" desc="公司名和地址会附在每封信末尾。退订链接用下面的站点地址。" />
+      <PageHead kicker="07 / 设置" title="签名和退订" desc="公司名和地址会附在每封信末尾。退订链接用下面的站点地址。" />
       {error ? <Banner kind="danger">{error}</Banner> : null}
       {notice ? <Banner kind="ok">{notice}</Banner> : null}
 
