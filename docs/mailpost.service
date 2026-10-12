@@ -1,0 +1,18 @@
+[Unit]
+Description=MailPost Gmail outbound
+After=network.target
+
+[Service]
+Type=simple
+User=ec2-user
+WorkingDirectory=/opt/mailpost
+Environment=NODE_ENV=production
+Environment=PORT=5006
+ExecStart=/usr/bin/node node_modules/next/dist/bin/next start --hostname 0.0.0.0 --port 5006
+Restart=on-failure
+RestartSec=5
+# Gmail SMTP
+# App data and secrets live in WorkingDirectory/data/mailpost.json
+
+[Install]
+WantedBy=multi-user.target
