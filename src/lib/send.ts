@@ -33,6 +33,103 @@ export function canLiveSend(mailbox: Mailbox): boolean {
   return Boolean(host && !host.includes("example.com") && smtpPass(mailbox));
 }
 
+function withPort(mailbox: Mailbox, port: number): Mailbox {
+  return { ...mailbox, smtpPort: port, smtpSecure: port === 465 };
+}
+
+function portCandidates(mailbox: Mailbox): Mailbox[] {
+  const host = mailbox.smtpHost.trim().toLowerCase();
+  const primary = mailbox.smtpPort || 587;
+  if (!host.includes("gmail")) return [withPort(mailbox, primary)];
+  const alt = primary === 465 ? 587 : 465;
+  return [withPort(mailbox, primary), withPort(mailbox, alt)];
+}
+
+function transportFor(mailbox: Mailbox) {
+  const host = mailbox.smtpHost.trim();
+  const port = mailbox.smtpPort || 587;
+  const secure = port === 465 || mailbox.smtpSecure;
+  return nodemailer.createTransport({
+    host,
+    port,
+    secure,
+    requireTLS: !secure,
+    family: 4,
+    connectionTimeout: 20_000,
+    greetingTimeout: 20_000,
+    socketTimeout: 30_000,
+    tls: {
+      minVersion: "TLSv1.2",
+      servername: host,
+    },
+    auth:
+      mailbox.smtpUser || mailbox.smtpPass
+        ? { user: mailbox.smtpUser, pass: smtpPass(mailbox) }
+        : undefined,
+  } as never);
+}
+
+function isRetryableSmtp(err: unknown): boolean {
+  const raw = `${err instanceof Error ? err.message : String(err)} ${typeof err === "object" && err && "code" in err ? String((err as { code?: string }).code) : ""}`;
+  return /connection closed|econnection|etimedout|timeout|econnreset|econnrefused|socket closed/i.test(raw);
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export function explainSmtpError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  const blob = raw.toLowerCase();
+  if (blob.includes("invalid login") || blob.includes("eauth") || blob.includes("username and password not accepted") || blob.includes("535")) {
+    return "Gmail 拒绝登录。必须用该邮箱自己的 16 位应用专用密码，不能用网页登录密码。到 Gmail 页更新后再发。";
+  }
+  if (isRetryableSmtp(err)) {
+    return "连不上 Gmail SMTP（587/465）。本机请给 smtp.gmail.com 设 Clash 直连。服务器上请测 nc -vz smtp.gmail.com 587 和 465，安全组出站放行这两端口；AWS 默认只死卡 25，若 587 也不通要申请解除发信限制。";
+  }
+  return raw;
+}
+
+async function withSmtpRetry<T>(fn: () => Promise<T>): Promise<T> {
+  let last: unknown;
+  for (let i = 0; i < 3; i += 1) {
+    try {
+      return await fn();
+    } catch (err) {
+      last = err;
+      if (!isRetryableSmtp(err) || i === 2) throw err;
+      await delay(700 * (i + 1));
+    }
+  }
+  throw last;
+}
+
+async function tryPorts<T>(mailbox: Mailbox, fn: (box: Mailbox) => Promise<T>): Promise<T> {
+  let last: unknown;
+  for (const candidate of portCandidates(mailbox)) {
+    try {
+      const result = await withSmtpRetry(() => fn(candidate));
+      mailbox.smtpPort = candidate.smtpPort;
+      mailbox.smtpSecure = candidate.smtpSecure;
+      return result;
+    } catch (err) {
+      last = err;
+    }
+  }
+  throw last;
+}
+
+export async function verifySmtp(mailbox: Mailbox): Promise<void> {
+  await tryPorts(mailbox, async (box) => {
+    const transporter = transportFor(box);
+    try {
+      await transporter.verify();
+    } finally {
+      transporter.close();
+    }
+  });
+}
+
 export async function deliver(opts: {
   state: AppState;
   mailbox: Mailbox;
@@ -60,36 +157,21 @@ export async function deliver(opts: {
     return { sandbox: true, path: file };
   }
 
-  const host = opts.mailbox.smtpHost.trim();
-  const port = opts.mailbox.smtpPort || 587;
-  const secure = port === 465 || opts.mailbox.smtpSecure;
-  const transporter = nodemailer.createTransport({
-    host,
-    port,
-    secure,
-    requireTLS: !secure,
-    family: 4,
-    connectionTimeout: 20_000,
-    greetingTimeout: 20_000,
-    socketTimeout: 30_000,
-    tls: {
-      minVersion: "TLSv1.2",
-      servername: host,
-    },
-    auth:
-      opts.mailbox.smtpUser || opts.mailbox.smtpPass
-        ? { user: opts.mailbox.smtpUser, pass: smtpPass(opts.mailbox) }
-        : undefined,
-  } as never);
-
-  await transporter.sendMail({
-    from: `"${opts.mailbox.displayName}" <${opts.mailbox.email}>`,
-    to: opts.contact.email,
-    subject: opts.subject,
-    text: opts.body,
-    headers: {
-      "List-Unsubscribe": `<${unsubUrl(opts.state, opts.contact)}>`,
-    },
+  await tryPorts(opts.mailbox, async (box) => {
+    const transporter = transportFor(box);
+    try {
+      await transporter.sendMail({
+        from: `"${box.displayName}" <${box.email}>`,
+        to: opts.contact.email,
+        subject: opts.subject,
+        text: opts.body,
+        headers: {
+          "List-Unsubscribe": `<${unsubUrl(opts.state, opts.contact)}>`,
+        },
+      });
+    } finally {
+      transporter.close();
+    }
   });
 
   return { sandbox: false };

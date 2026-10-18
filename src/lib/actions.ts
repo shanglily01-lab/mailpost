@@ -8,7 +8,7 @@ import {
   mailboxEffectiveCap,
   resetSentToday,
 } from "./safety";
-import { buildMessage, canLiveSend, deliver, newJob, unsubUrl } from "./send";
+import { buildMessage, canLiveSend, deliver, explainSmtpError, newJob, unsubUrl, verifySmtp } from "./send";
 import { pushLog } from "./store";
 import { complianceFooter, renderTemplate } from "./template";
 import type {
@@ -113,17 +113,17 @@ function ensureGmailDomain(state: AppState) {
   return domain;
 }
 
-export function createMailbox(
+export async function createMailbox(
   state: AppState,
   input: {
     email: string;
     displayName: string;
     smtpPass: string;
   },
-): ActionResult {
+): Promise<ActionResult> {
   const email = input.email.trim().toLowerCase();
   if (!email.endsWith("@gmail.com") && !email.endsWith("@googlemail.com")) {
-    return { ok: false, error: "只支持 Gmail（@gmail.com）。" };
+    return { ok: false, error: "只支持 Gmail（@gmail.com）。自定义域名目前发不了。" };
   }
   if (!input.smtpPass.trim()) return { ok: false, error: "请填写 Gmail 应用专用密码。" };
   if (state.mailboxes.some((m) => m.email === email)) return { ok: false, error: "这个 Gmail 已经接入了。" };
@@ -145,21 +145,59 @@ export function createMailbox(
     warmupStartedAt: nowISO(),
     status: "warming",
   };
+  try {
+    await verifySmtp(row);
+  } catch (err) {
+    return { ok: false, error: `没接入成功：${explainSmtpError(err)}` };
+  }
   state.mailboxes.push(row);
   if (!state.settings.companyName) state.settings.companyName = row.displayName;
   pushLog(state, "ok", "已添加邮箱", email);
-  return { ok: true, message: `已接入 ${email}。前 3 天每天最多 5 封。` };
+  return { ok: true, message: `已接入 ${email}，SMTP 验证通过。前 3 天每天最多 5 封。写信页请选中这个邮箱再发。` };
 }
 
-export function updateMailbox(
+export async function updateMailbox(
   state: AppState,
   input: { id: string; displayName?: string; smtpPass?: string },
-): ActionResult {
+): Promise<ActionResult> {
   const row = state.mailboxes.find((m) => m.id === input.id);
   if (!row) return { ok: false, error: "邮箱不存在。" };
   if (input.displayName !== undefined) row.displayName = input.displayName.trim() || row.displayName;
-  if (input.smtpPass?.trim()) row.smtpPass = input.smtpPass.trim();
+  if (input.smtpPass?.trim()) {
+    const nextPass = input.smtpPass.trim();
+    try {
+      await verifySmtp({ ...row, smtpPass: nextPass });
+    } catch (err) {
+      return { ok: false, error: `密码没更新：${explainSmtpError(err)}` };
+    }
+    row.smtpPass = nextPass;
+  }
   return { ok: true, message: "已更新。" };
+}
+
+export function deleteMailbox(state: AppState, id: string): ActionResult {
+  const row = state.mailboxes.find((m) => m.id === id);
+  if (!row) return { ok: false, error: "邮箱不存在。" };
+
+  let skipped = 0;
+  for (const job of state.jobs.filter((j) => j.mailboxId === id && j.status === "queued")) {
+    job.status = "skipped";
+    job.blockReason = "发件邮箱已删除";
+    skipped += 1;
+  }
+
+  for (const campaign of state.campaigns) {
+    if (!campaign.mailboxIds.includes(id)) continue;
+    campaign.mailboxIds = campaign.mailboxIds.filter((mid) => mid !== id);
+    if (campaign.mailboxIds.length === 0 && (campaign.status === "running" || campaign.status === "paused")) {
+      campaign.status = "completed";
+      campaign.killReason = campaign.killReason || "发件邮箱已删除";
+    }
+  }
+
+  state.mailboxes = state.mailboxes.filter((m) => m.id !== id);
+  pushLog(state, "warn", "已删除邮箱", skipped ? `${row.email} · 取消排队 ${skipped} 封` : row.email);
+  return { ok: true, message: skipped ? `已删除 ${row.email}，并取消排队 ${skipped} 封。` : `已删除 ${row.email}。` };
 }
 
 export function createContact(
@@ -660,7 +698,7 @@ export async function processQueue(state: AppState, limit = 8): Promise<ActionRe
         });
       } catch (err) {
         job.status = "blocked";
-        job.blockReason = err instanceof Error ? err.message : "SMTP 失败";
+        job.blockReason = explainSmtpError(err);
         blocked += 1;
         continue;
       }
@@ -697,7 +735,7 @@ export async function processQueue(state: AppState, limit = 8): Promise<ActionRe
       await deliver({ state, mailbox: mailbox0, contact, subject: msg.subject, body: msg.body });
     } catch (err) {
       job.status = "blocked";
-      job.blockReason = err instanceof Error ? err.message : "SMTP 失败";
+      job.blockReason = explainSmtpError(err);
       blocked += 1;
       continue;
     }
@@ -850,7 +888,7 @@ export async function sendOnce(
       forceLive: true,
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "SMTP 失败";
+    const message = explainSmtpError(err);
     pushLog(state, "danger", "发送失败", message);
     return { ok: false, error: `没发出去：${message}` };
   }

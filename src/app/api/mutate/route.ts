@@ -41,6 +41,8 @@ export async function POST(req: Request) {
             displayName: p.displayName ? String(p.displayName) : undefined,
             smtpPass: p.smtpPass ? String(p.smtpPass) : undefined,
           });
+        case "deleteMailbox":
+          return actions.deleteMailbox(state, String(p.id ?? ""));
         case "deleteContact":
           return actions.deleteContact(state, String(p.id ?? ""));
         case "deleteSequence":

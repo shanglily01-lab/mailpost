@@ -42,9 +42,9 @@ export default function MailboxesPage() {
               <div className="num text-[12px] text-mist">
                 今日 {m.sentToday}/{m.effectiveCap} · smtp.gmail.com:587
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <input
-                  className="field"
+                  className="field min-w-0 flex-1"
                   type="password"
                   placeholder="更新应用专用密码"
                   value={passEdit[m.id] ?? ""}
@@ -60,6 +60,17 @@ export default function MailboxesPage() {
                   }}
                 >
                   更新
+                </button>
+                <button
+                  className="btn"
+                  disabled={busy}
+                  type="button"
+                  onClick={() => {
+                    if (!confirm(`删除发件邮箱 ${m.email}？排队中用这个号发的信也会取消。`)) return;
+                    mutate("deleteMailbox", { id: m.id });
+                  }}
+                >
+                  删除
                 </button>
               </div>
             </article>
@@ -78,8 +89,9 @@ export default function MailboxesPage() {
             <input className="field" type="password" value={form.smtpPass} onChange={(e) => setForm({ ...form, smtpPass: e.target.value })} required />
           </Field>
           <button className="btn btn-amber w-full" disabled={busy} type="submit">
-            接入
+            {busy ? "正在验证 SMTP…" : "接入"}
           </button>
+          <p className="text-[12px] text-mist">每个 Gmail 都要单独生成应用专用密码。接入时会先连 smtp.gmail.com 试登录。</p>
         </form>
       </div>
     </>

@@ -31,7 +31,8 @@ export default function BlastPage() {
   const [name, setName] = useState("");
 
   useEffect(() => {
-    if (!mailboxId && live[0]) setMailboxId(live[0].id);
+    if (live.some((m) => m.id === mailboxId)) return;
+    setMailboxId(live[0]?.id ?? "");
   }, [live, mailboxId]);
 
   const running = Boolean(state?.campaigns.some((c) => c.status === "running"));

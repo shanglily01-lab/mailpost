@@ -18,7 +18,8 @@ export default function ComposePage() {
   const [scriptName, setScriptName] = useState("");
 
   useEffect(() => {
-    if (!mailboxId && live[0]) setMailboxId(live[0].id);
+    if (live.some((m) => m.id === mailboxId)) return;
+    setMailboxId(live[0]?.id ?? "");
   }, [live, mailboxId]);
 
   if (!state) return <div className="p-10 text-mist">{error || "加载中…"}</div>;
@@ -122,7 +123,7 @@ export default function ComposePage() {
         </Field>
 
         <div className="flex flex-wrap items-center gap-2">
-          <button className="btn btn-amber" disabled={busy || live.length === 0 || left <= 0} type="submit">
+          <button className="btn btn-amber" disabled={busy || live.length === 0 || !box || left <= 0} type="submit">
             {busy ? "发送中…" : "发送"}
           </button>
           <input

@@ -97,7 +97,7 @@ export function sanitizeState(state: AppState): boolean {
   state.settings.primaryDomain = "gmail.com";
   state.settings.sandboxMode = false;
 
-  const keepTitles = new Set(["已发送", "已添加邮箱", "话术已保存", "联系人已添加", "群发已排队", "队列已处理", "群发已取消"]);
+  const keepTitles = new Set(["已发送", "已添加邮箱", "已删除邮箱", "话术已保存", "联系人已添加", "群发已排队", "队列已处理", "群发已取消"]);
   state.activity = state.activity.filter(
     (a) => keepTitles.has(a.title) && !/northbound|北境|getnorthbound|try-northbound|ironvale|example/i.test(a.detail),
   );
