@@ -8,9 +8,9 @@ import {
   mailboxEffectiveCap,
   resetSentToday,
 } from "./safety";
-import { buildMessage, canLiveSend, deliver, explainSmtpError, newJob, unsubUrl, verifySmtp } from "./send";
+import { buildMessage, canLiveSend, deliver, explainSmtpError, newJob, verifySmtp } from "./send";
 import { pushLog } from "./store";
-import { complianceFooter, renderTemplate } from "./template";
+import { renderTemplate } from "./template";
 import type {
   AppState,
   Campaign,
@@ -686,7 +686,7 @@ export async function processQueue(state: AppState, limit = 8): Promise<ActionRe
         continue;
       }
       const subjectRendered = renderTemplate(campaign.subject || job.subject, contact);
-      const fullBody = `${renderTemplate(campaign.body || "", contact)}\n${complianceFooter(state.settings, unsubUrl(state, contact))}`;
+      const fullBody = renderTemplate(campaign.body || "", contact);
       try {
         await deliver({
           state,
@@ -695,6 +695,7 @@ export async function processQueue(state: AppState, limit = 8): Promise<ActionRe
           subject: subjectRendered,
           body: fullBody,
           forceLive: true,
+          kind: "bulk",
         });
       } catch (err) {
         job.status = "blocked";
@@ -874,9 +875,8 @@ export async function sendOnce(
   }
 
   if (input.firstName?.trim()) contact.firstName = input.firstName.trim();
-  const url = unsubUrl(state, contact);
   const subjectRendered = renderTemplate(subject, contact);
-  const fullBody = `${renderTemplate(body, contact)}\n${complianceFooter(state.settings, url)}`;
+  const fullBody = renderTemplate(body, contact);
 
   try {
     await deliver({
@@ -886,6 +886,7 @@ export async function sendOnce(
       subject: subjectRendered,
       body: fullBody,
       forceLive: true,
+      kind: "direct",
     });
   } catch (err) {
     const message = explainSmtpError(err);

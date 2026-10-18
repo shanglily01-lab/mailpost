@@ -45,10 +45,16 @@ else
 fi
 
 cd "${APP_DIR}"
+sudo mkdir -p /var/lib/mailpost/outbox
+if [[ -f ${APP_DIR}/data/mailpost.json && ! -s /var/lib/mailpost/mailpost.json ]]; then
+  sudo cp -a "${APP_DIR}/data/mailpost.json" /var/lib/mailpost/mailpost.json
+fi
+sudo chown -R "${APP_USER}:${APP_USER}" /var/lib/mailpost
+sudo chmod 700 /var/lib/mailpost
 mkdir -p data/outbox
 chmod 700 data
-if [[ -f data/mailpost.json ]]; then
-  chmod 600 data/mailpost.json
+if [[ -f /var/lib/mailpost/mailpost.json ]]; then
+  chmod 600 /var/lib/mailpost/mailpost.json
 fi
 
 echo "==> 安装依赖并构建"
@@ -75,7 +81,7 @@ ss -lntp | grep "${PORT}" || echo "尚未听到 ${PORT}，看 journalctl -u mail
 echo
 echo "完成。浏览器打开 http://本机公网IP:${PORT}"
 echo "AWS 安全组入站还要放行 TCP ${PORT}（来源用你的办公网 IP）。"
-echo "Gmail 数据不在 Git 里。本机执行："
-echo "  scp -i 你的.pem d:\\mailpost\\data\\mailpost.json ${APP_USER}@SERVER_IP:${APP_DIR}/data/"
+echo "Gmail 数据在 /var/lib/mailpost，更新代码不会丢掉。本机若要拷数据："
+echo "  scp -i 你的.pem d:\\mailpost\\data\\mailpost.json ${APP_USER}@SERVER_IP:/var/lib/mailpost/"
 echo "然后： sudo systemctl restart mailpost"
-echo "或在页面 Gmail 里重新接入发件箱。"
+echo "或在页面 Gmail 里接入发件箱（只需一次）。"

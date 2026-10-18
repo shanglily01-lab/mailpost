@@ -2,12 +2,31 @@ import { mkdirSync, writeFileSync } from "fs";
 import path from "path";
 import nodemailer from "nodemailer";
 import type { AppState, Contact, Mailbox, SendJob, SequenceStep } from "./types";
-import { complianceFooter, renderTemplate } from "./template";
+import { renderTemplate, signatureFooter } from "./template";
 import { nid, nowISO } from "./id";
+import { dataDir } from "./store";
 
 export function unsubUrl(state: AppState, contact: Contact): string {
   const base = state.settings.publicBaseUrl.replace(/\/$/, "");
   return `${base}/u/${contact.unsubToken}`;
+}
+
+export function isPublicHttpsBase(raw: string): boolean {
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== "https:") return false;
+    const host = u.hostname.toLowerCase();
+    if (!host || host === "localhost" || host.endsWith(".local") || host === "127.0.0.1") return false;
+    if (/^\d+\.\d+\.\d+\.\d+$/.test(host)) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function publicUnsubUrl(state: AppState, contact: Contact): string {
+  if (!isPublicHttpsBase(state.settings.publicBaseUrl)) return "";
+  return unsubUrl(state, contact);
 }
 
 export function buildMessage(
@@ -15,12 +34,9 @@ export function buildMessage(
   contact: Contact,
   step: SequenceStep,
 ): { subject: string; body: string } {
-  const url = unsubUrl(state, contact);
+  const url = publicUnsubUrl(state, contact);
   const subject = renderTemplate(step.subject, contact);
-  const body =
-    renderTemplate(step.body, contact, { unsubUrl: url }) +
-    "\n" +
-    complianceFooter(state.settings, url);
+  const body = renderTemplate(step.body, contact, { unsubUrl: url }) + signatureFooter(state.settings, url);
   return { subject, body };
 }
 
@@ -137,10 +153,19 @@ export async function deliver(opts: {
   subject: string;
   body: string;
   forceLive?: boolean;
+  /** 群发才带退订头；一对一私人信不要带，否则容易进垃圾箱。 */
+  kind?: "direct" | "bulk";
 }): Promise<{ sandbox: boolean; path?: string }> {
+  const kind = opts.kind ?? "direct";
+  const unsub = kind === "bulk" ? publicUnsubUrl(opts.state, opts.contact) : "";
+  const footer = signatureFooter(opts.state.settings, unsub);
+  const body = footer ? `${opts.body}${opts.body.endsWith("\n") ? "" : "\n"}${footer}` : opts.body;
+  const headers: Record<string, string> = {};
+  if (unsub) headers["List-Unsubscribe"] = `<${unsub}>`;
+
   const live = opts.forceLive || (!opts.state.settings.sandboxMode && canLiveSend(opts.mailbox));
   if (!live) {
-    const dir = path.join(process.cwd(), "data", "outbox");
+    const dir = path.join(dataDir(), "outbox");
     mkdirSync(dir, { recursive: true });
     const file = path.join(dir, `${Date.now()}-${opts.contact.email.replace(/[^a-z0-9@._-]/gi, "_")}.txt`);
     writeFileSync(
@@ -150,7 +175,7 @@ export async function deliver(opts: {
         `To: ${opts.contact.email}`,
         `Subject: ${opts.subject}`,
         "",
-        opts.body,
+        body,
       ].join("\n"),
       "utf8",
     );
@@ -164,10 +189,8 @@ export async function deliver(opts: {
         from: `"${box.displayName}" <${box.email}>`,
         to: opts.contact.email,
         subject: opts.subject,
-        text: opts.body,
-        headers: {
-          "List-Unsubscribe": `<${unsubUrl(opts.state, opts.contact)}>`,
-        },
+        text: body,
+        headers,
       });
     } finally {
       transporter.close();

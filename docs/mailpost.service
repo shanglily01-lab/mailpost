@@ -8,11 +8,11 @@ User=ec2-user
 WorkingDirectory=/opt/mailpost
 Environment=NODE_ENV=production
 Environment=PORT=5006
+Environment=MAILPOST_DATA_DIR=/var/lib/mailpost
 ExecStart=/usr/bin/node node_modules/next/dist/bin/next start --hostname 0.0.0.0 --port 5006
 Restart=on-failure
 RestartSec=5
-# Gmail SMTP
-# App data and secrets live in WorkingDirectory/data/mailpost.json
+# Gmail SMTP secrets live in MAILPOST_DATA_DIR, outside the git tree.
 
 [Install]
 WantedBy=multi-user.target

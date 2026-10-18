@@ -67,15 +67,16 @@ export function lintCopy(subject: string, body: string): Gate[] {
   return gates;
 }
 
-export function complianceFooter(
-  settings: Settings,
-  unsubUrl: string,
-): string {
-  return [
-    "",
-    "--",
-    settings.companyName,
-    settings.physicalAddress,
-    `退订 Unsubscribe: ${unsubUrl}`,
-  ].join("\n");
+export function signatureFooter(settings: Settings, unsubUrl = ""): string {
+  const lines = ["", "--"];
+  if (settings.companyName.trim()) lines.push(settings.companyName.trim());
+  if (settings.physicalAddress.trim()) lines.push(settings.physicalAddress.trim());
+  if (unsubUrl) lines.push(`如不再需要这类邮件，打开：${unsubUrl}`);
+  if (lines.length === 2) return "";
+  return lines.join("\n");
+}
+
+/** @deprecated use signatureFooter */
+export function complianceFooter(settings: Settings, unsubUrl: string): string {
+  return signatureFooter(settings, unsubUrl);
 }

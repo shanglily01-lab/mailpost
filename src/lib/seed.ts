@@ -48,24 +48,45 @@ function isGmailAddress(email: string): boolean {
   return e.endsWith("@gmail.com") || e.endsWith("@googlemail.com");
 }
 
-/** Strip demo/system records. Keep the user's Gmail mailbox, contacts, and real sends. */
+function hasDemoJunk(state: AppState): boolean {
+  const blob = `${state.settings.companyName} ${state.settings.physicalAddress}`;
+  if (/北境|Northbound|外马路/i.test(blob)) return true;
+  if (state.contacts.some((c) => c.email.endsWith(".example") || c.email.endsWith(".invalid") || c.verifyNote.includes("演示数据"))) {
+    return true;
+  }
+  if (state.sequences.some((s) => s.name.includes("采购痛点") || s.name.includes("北境"))) return true;
+  return false;
+}
+
+/** Strip leftover demo records once. Never delete a real Gmail mailbox the user added. */
 export function sanitizeState(state: AppState): boolean {
   const before = JSON.stringify(state);
 
   let domain = state.domains.find((d) => d.hostname === "gmail.com");
   if (!domain) {
     domain = gmailDomain();
+    state.domains.push(domain);
   }
+
+  for (const m of state.mailboxes) {
+    if (!m.smtpHost) m.smtpHost = "smtp.gmail.com";
+    if (!m.smtpPort) m.smtpPort = 587;
+    if (!m.smtpUser) m.smtpUser = m.email;
+    if (!m.domainId) m.domainId = domain.id;
+  }
+
+  if (!hasDemoJunk(state)) {
+    return JSON.stringify(state) !== before;
+  }
+
   state.domains = [domain];
 
   state.mailboxes = state.mailboxes
-    .filter((m) => isGmailAddress(m.email) && m.smtpHost.includes("gmail"))
+    .filter((m) => isGmailAddress(m.email) && (m.smtpHost.includes("gmail") || !m.smtpHost))
     .map((m) => ({
       ...m,
       domainId: domain.id,
-      smtpHost: "smtp.gmail.com",
-      smtpPort: 587,
-      smtpSecure: false,
+      smtpHost: m.smtpHost || "smtp.gmail.com",
       smtpUser: m.smtpUser || m.email,
     }));
 

@@ -30,7 +30,7 @@ export default function CompliancePage() {
 
   return (
     <>
-      <PageHead kicker="07 / 设置" title="签名和退订" desc="公司名和地址会附在每封信末尾。退订链接用下面的站点地址。" />
+      <PageHead kicker="07 / 设置" title="签名和退订" desc="显示名会作为私人信签名。退订链接只加在群发上，而且必须是 https 域名，不要填 localhost 或 IP，否则容易进垃圾箱。" />
       {error ? <Banner kind="danger">{error}</Banner> : null}
       {notice ? <Banner kind="ok">{notice}</Banner> : null}
 
@@ -41,8 +41,13 @@ export default function CompliancePage() {
         <Field label="地址（可选）">
           <textarea className="field min-h-20" value={form.physicalAddress} onChange={(e) => setForm({ ...form, physicalAddress: e.target.value })} />
         </Field>
-        <Field label="站点（退订链接）">
-          <input className="field" value={form.publicBaseUrl} onChange={(e) => setForm({ ...form, publicBaseUrl: e.target.value })} />
+        <Field label="站点（群发退订，需 https 域名）">
+          <input
+            className="field"
+            value={form.publicBaseUrl}
+            onChange={(e) => setForm({ ...form, publicBaseUrl: e.target.value })}
+            placeholder="https://mail.yourdomain.com"
+          />
         </Field>
         <button className="btn btn-amber" disabled={busy} type="submit">
           保存
