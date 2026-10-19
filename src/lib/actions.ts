@@ -24,6 +24,7 @@ import type {
   Region,
   Sequence,
 } from "./types";
+import { parseContactFile } from "./contact-import";
 import { looksPurchased, verifyEmail } from "./verify";
 import { warmupDayNumber } from "./warmup";
 
@@ -241,68 +242,92 @@ export function deleteContact(state: AppState, id: string): ActionResult {
   return { ok: true, message: "已删除。" };
 }
 
+function asRegion(value: string, fallback: Region): Region {
+  const region = value.trim().toUpperCase();
+  if (region === "CN" || region === "US" || region === "EU" || region === "OTHER") return region;
+  return fallback;
+}
+
+function asConsent(value: string): Consent {
+  if (value === "explicit_opt_in" || value === "implied_b2b" || value === "none") return value;
+  return "implied_b2b";
+}
+
+function asIcp(value: string): IcpFit {
+  if (value === "high" || value === "medium" || value === "low") return value;
+  return "medium";
+}
+
+function asSource(value: string, fallback: ContactSource): ContactSource {
+  if (value === "manual" || value === "b2b_db" || value === "website" || value === "event" || value === "purchased") {
+    return value;
+  }
+  return fallback;
+}
+
 export function importContacts(
   state: AppState,
   input: { csv: string; source: ContactSource; defaultRegion: Region },
 ): ActionResult {
-  if (input.source === "purchased" || looksPurchased(input.source)) {
+  const fallbackSource = asSource(String(input.source ?? ""), "manual");
+  if (fallbackSource === "purchased" || looksPurchased(String(input.source ?? ""))) {
     return {
       ok: false,
       error:
         "已拦截：系统拒绝导入购买的第三方名单。买名单会撞上蜜罐、推高退信，并把域名送进黑名单。请改用 B2B 数据库按 ICP 筛选。",
     };
   }
-  const lines = input.csv
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter(Boolean);
-  if (lines.length === 0) return { ok: false, error: "CSV 为空。" };
-  if (lines.length - 1 > IMPORT_ROW_CAP) {
-    return { ok: false, error: `单次最多导入 ${IMPORT_ROW_CAP} 行。精耕细作，不要一次倒几万行。` };
+  if (input.csv.length > 1_000_000) return { ok: false, error: "文件请控制在 1MB 以内。" };
+
+  const parsed = parseContactFile(input.csv);
+  if (!parsed.ok) return { ok: false, error: parsed.error };
+  if (parsed.rows.length > IMPORT_ROW_CAP) {
+    return { ok: false, error: `单次最多导入 ${IMPORT_ROW_CAP} 个邮箱。` };
   }
 
-  const header = lines[0].split(",").map((h) => h.trim().toLowerCase());
-  const idx = (name: string) => header.indexOf(name);
-  const emailIdx = idx("email");
-  if (emailIdx < 0) return { ok: false, error: "CSV 需要 email 列。" };
+  for (const row of parsed.rows) {
+    const src = row.source.trim() || fallbackSource;
+    if (src === "purchased" || looksPurchased(src)) {
+      return { ok: false, error: `行内来源为购买名单（${row.email}）。整批已拒绝。` };
+    }
+  }
 
+  const regionFallback = asRegion(String(input.defaultRegion ?? ""), "US");
+  const seen = new Set(state.contacts.map((c) => c.email));
   let added = 0;
-  let skipped = 0;
-  for (const line of lines.slice(1)) {
-    const cols = line.split(",").map((c) => c.trim());
-    const email = (cols[emailIdx] || "").toLowerCase();
-    if (!email || state.contacts.some((c) => c.email === email)) {
+  let skipped = parsed.invalid;
+  for (const row of parsed.rows) {
+    if (seen.has(row.email)) {
       skipped += 1;
       continue;
     }
-    const src = (cols[idx("source")] as ContactSource) || input.source;
-    if (src === "purchased" || looksPurchased(src)) {
-      return { ok: false, error: `行内来源为购买名单（${email}）。整批已拒绝。` };
-    }
+    seen.add(row.email);
+    const src = asSource(row.source.trim(), fallbackSource);
     state.contacts.push({
       id: nid(),
-      email,
-      firstName: cols[idx("firstname")] || cols[idx("first_name")] || "",
-      lastName: cols[idx("lastname")] || cols[idx("last_name")] || "",
-      title: cols[idx("title")] || "",
-      company: cols[idx("company")] || "",
-      industry: cols[idx("industry")] || "",
-      icpFit: ((cols[idx("icpfit")] || cols[idx("icp")] || "medium") as IcpFit) || "medium",
+      email: row.email,
+      firstName: row.firstName.trim(),
+      lastName: row.lastName.trim(),
+      title: row.title.trim(),
+      company: row.company.trim(),
+      industry: row.industry.trim(),
+      icpFit: asIcp(row.icpFit.trim()),
       source: src,
       verification: "unverified",
       verifyNote: "导入后待验真。",
-      consent: ((cols[idx("consent")] as Consent) || "none") as Consent,
-      region: ((cols[idx("region")] as Region) || input.defaultRegion) as Region,
+      consent: asConsent(row.consent.trim()),
+      region: asRegion(row.region, regionFallback),
       unsubscribed: false,
       suppressed: false,
       unsubToken: token(),
-      notes: cols[idx("notes")] || "",
+      notes: row.notes.trim(),
       createdAt: nowISO(),
     });
     added += 1;
   }
-  pushLog(state, "ok", "联系人导入", `新增 ${added}，跳过 ${skipped}。全部待验真。`);
-  return { ok: true, message: `新增 ${added} 人，跳过 ${skipped}。请先跑验真再进活动。` };
+  const detail = skipped ? `新增 ${added}，跳过 ${skipped}。` : `新增 ${added}。`;
+  pushLog(state, "ok", "联系人导入", detail);
+  return { ok: true, message: skipped ? `新增 ${added} 人，跳过 ${skipped}。` : `已导入 ${added} 人。` };
 }
 
 export async function verifyContacts(state: AppState, ids?: string[]): Promise<ActionResult> {

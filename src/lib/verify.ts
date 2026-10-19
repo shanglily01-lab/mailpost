@@ -5,6 +5,16 @@ import type { Verification } from "./types";
 const EMAIL_RE =
   /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
 
+export function isEmailAddress(raw: string): boolean {
+  return EMAIL_RE.test(raw.trim());
+}
+
+export function findEmails(raw: string): string[] {
+  const re = new RegExp(EMAIL_RE.source.slice(1, -1), "gi");
+  const found = raw.match(re);
+  return found ? found.map((email) => email.toLowerCase()) : [];
+}
+
 export type VerifyResult = {
   verification: Verification;
   note: string;
