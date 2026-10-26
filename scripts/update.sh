@@ -5,6 +5,7 @@
 set -euo pipefail
 
 APP_DIR=/opt/mailpost
+APP_USER=ec2-user
 PORT=5006
 
 if [[ ! -d "${APP_DIR}/.git" ]]; then
@@ -15,12 +16,13 @@ fi
 cd "${APP_DIR}"
 
 echo "==> 只更新代码，不碰 /var/lib/mailpost"
+# 代码目录里若有 root 拥有的 package-lock.json，npm 会 EACCES。只改 /opt/mailpost 的属主。
+sudo chown -R "${APP_USER}:${APP_USER}" "${APP_DIR}"
 echo "==> git pull"
 git pull --ff-only
 
 echo "==> 安装依赖并构建"
-rm -rf node_modules
-npm install
+npm ci
 npm run build
 
 echo "==> 重启服务"
