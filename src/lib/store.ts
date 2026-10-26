@@ -1,6 +1,6 @@
-import { mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, statSync } from "fs";
+import { mkdirSync, readFileSync, writeFileSync, existsSync } from "fs";
 import path from "path";
-import { sanitizeState, seedState } from "./seed";
+import { seedState } from "./seed";
 import type { AppState, Activity } from "./types";
 import { nid, nowISO } from "./id";
 
@@ -23,47 +23,18 @@ export function dataFile(): string {
   return FILE;
 }
 
-function latestBackup(): string | null {
-  const dirs = [DIR, path.join(process.cwd(), "data")];
-  let best: { path: string; mtime: number } | null = null;
-  for (const dir of dirs) {
-    if (!existsSync(dir)) continue;
-    for (const name of readdirSync(dir)) {
-      if (name !== "mailpost.json" && !name.startsWith("mailpost.json.bak-")) continue;
-      const full = path.join(dir, name);
-      if (full === FILE) continue;
-      try {
-        const mtime = statSync(full).mtimeMs;
-        if (!best || mtime > best.mtime) best = { path: full, mtime };
-      } catch {
-        /* ignore unreadable */
-      }
-    }
-  }
-  return best?.path ?? null;
-}
-
 export function loadState(): AppState {
   if (cache) return cache;
   mkdirSync(DIR, { recursive: true });
   mkdirSync(path.join(DIR, "outbox"), { recursive: true });
 
   if (!existsSync(FILE)) {
-    const bak = latestBackup();
-    if (bak) {
-      cache = JSON.parse(readFileSync(bak, "utf8")) as AppState;
-      writeFileSync(FILE, JSON.stringify(cache, null, 2), "utf8");
-      return cache;
-    }
     cache = seedState();
     writeFileSync(FILE, JSON.stringify(cache, null, 2), "utf8");
     return cache;
   }
 
   cache = JSON.parse(readFileSync(FILE, "utf8")) as AppState;
-  if (sanitizeState(cache)) {
-    writeFileSync(FILE, JSON.stringify(cache, null, 2), "utf8");
-  }
   return cache;
 }
 

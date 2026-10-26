@@ -1,12 +1,10 @@
 #!/usr/bin/env bash
-# MailPost 更新部署 — 邮箱/联系人放在 /var/lib/mailpost，更新代码不会丢掉。
+# MailPost 更新部署 — 只更新代码。不读、不写、不备份 /var/lib/mailpost。
 # 用法：
 #   cd /opt/mailpost && bash scripts/update.sh
 set -euo pipefail
 
 APP_DIR=/opt/mailpost
-APP_USER=ec2-user
-DATA_DIR=/var/lib/mailpost
 PORT=5006
 
 if [[ ! -d "${APP_DIR}/.git" ]]; then
@@ -16,22 +14,7 @@ fi
 
 cd "${APP_DIR}"
 
-echo "==> 保护已设置的邮箱 ${DATA_DIR}"
-sudo mkdir -p "${DATA_DIR}/outbox"
-# 服务器上的邮箱只活在这个文件里。更新代码时永远不要用仓库或本机的 data/mailpost.json 覆盖它。
-if sudo test -s "${DATA_DIR}/mailpost.json"; then
-  sudo cp -a "${DATA_DIR}/mailpost.json" "${DATA_DIR}/mailpost.json.bak-$(date +%F-%H%M%S)"
-  echo "    已备份，不覆盖现有邮箱"
-else
-  echo "    没有 ${DATA_DIR}/mailpost.json。脚本不会从代码目录拷贝，避免把旧的邮箱名单盖上去。"
-  echo "    若要找回，在 ${DATA_DIR}/mailpost.json.bak-* 里选一份再拷回来。"
-fi
-sudo chown -R "${APP_USER}:${APP_USER}" "${DATA_DIR}"
-sudo chmod 700 "${DATA_DIR}"
-if [[ -f ${DATA_DIR}/mailpost.json ]]; then
-  sudo chmod 600 "${DATA_DIR}/mailpost.json"
-fi
-
+echo "==> 只更新代码，不碰 /var/lib/mailpost"
 echo "==> git pull"
 git pull --ff-only
 
@@ -54,13 +37,7 @@ else
   exit 1
 fi
 
-if [[ -s ${DATA_DIR}/mailpost.json ]]; then
-  echo "==> 邮箱数据仍在 ${DATA_DIR}/mailpost.json"
-else
-  echo "==> 警告：没有找到邮箱数据。到网页 Gmail 页重新接入。"
-fi
-
 ss -lntp | grep "${PORT}" || echo "未听到 ${PORT}，执行： sudo journalctl -u mailpost -e"
 echo
-echo "更新完成。打开 http://本机公网IP:${PORT}"
-echo "接入过的 Gmail 在 ${DATA_DIR}，不要删这个目录。"
+echo "更新完成。只更新了代码，邮箱数据没有改。"
+echo "打开 http://本机公网IP:${PORT}"
