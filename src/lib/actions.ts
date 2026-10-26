@@ -540,6 +540,7 @@ export function pauseCampaign(state: AppState, campaignId: string, resume = fals
   const campaign = state.campaigns.find((c) => c.id === campaignId);
   if (!campaign) return { ok: false, error: "群发任务不存在。" };
   campaign.status = resume ? "running" : "paused";
+  if (resume) enqueueBulkWave(state, campaign);
   return { ok: true, message: resume ? "已继续排队发送。" : "已暂停，剩余的不会发出。" };
 }
 
@@ -576,6 +577,68 @@ function emailsWithStatus(state: AppState, statuses: Set<string>): Set<string> {
     if (email) emails.add(email);
   }
   return emails;
+}
+
+function enqueueBulkWave(state: AppState, campaign: Campaign): number {
+  if (campaign.status !== "running" || !isBulkCampaign(campaign)) return 0;
+  if (state.jobs.some((j) => j.campaignId === campaign.id && j.status === "queued")) return 0;
+  const delivered = emailsWithStatus(state, new Set(["sent", "bounced", "replied"]));
+  const seen = new Set(state.jobs.filter((j) => j.campaignId === campaign.id).map((j) => j.contactId));
+  const mailboxId = campaign.mailboxIds[0];
+  if (!mailboxId) return 0;
+  let added = 0;
+  for (const id of campaign.contactIds) {
+    if (seen.has(id)) continue;
+    const contact = state.contacts.find((c) => c.id === id);
+    const email = contact?.email.toLowerCase() || "";
+    const blocked =
+      !contact ||
+      !email ||
+      delivered.has(email) ||
+      contact.unsubscribed ||
+      contact.suppressed ||
+      contact.source === "purchased";
+    if (blocked) {
+      state.jobs.push(
+        newJob({
+          campaignId: campaign.id,
+          contactId: id,
+          mailboxId,
+          stepIndex: 0,
+          scheduledAt: nowISO(),
+          sentAt: null,
+          status: "skipped",
+          bounceType: null,
+          blockReason: contact ? "已发过或不能发" : "联系人已删除",
+          subject: campaign.subject || "",
+          preview: "",
+          toEmail: email,
+        }),
+      );
+      seen.add(id);
+      continue;
+    }
+    if (added >= BULK_BATCH_SIZE) break;
+    state.jobs.push(
+      newJob({
+        campaignId: campaign.id,
+        contactId: contact.id,
+        mailboxId,
+        stepIndex: 0,
+        scheduledAt: nowISO(),
+        sentAt: null,
+        status: "queued",
+        bounceType: null,
+        blockReason: "",
+        subject: renderTemplate(campaign.subject || "", contact),
+        preview: (campaign.body || "").slice(0, 180),
+        toEmail: email,
+      }),
+    );
+    seen.add(id);
+    added += 1;
+  }
+  return added;
 }
 
 export async function startBulk(
@@ -640,15 +703,13 @@ export async function startBulk(
   if (!sendable.length) {
     return { ok: false, error: skipped[0] || "没有可发的联系人。已经发过、退订和购买名单会被跳过。" };
   }
-  const batch = sendable.slice(0, BULK_BATCH_SIZE);
-  const held = sendable.length - batch.length;
 
   const campaign: Campaign = {
     id: nid(),
     name: input.name?.trim() || subject.slice(0, 24) || "群发",
     sequenceId: "",
     mailboxIds: [mailbox0.id],
-    contactIds: batch.map((c) => c.id),
+    contactIds: sendable.map((c) => c.id),
     status: "running",
     killReason: "",
     createdAt: nowISO(),
@@ -658,42 +719,24 @@ export async function startBulk(
     body,
   };
   state.campaigns.push(campaign);
-
-  for (const contact of batch) {
-    const rendered = renderTemplate(subject, contact);
-    state.jobs.push(
-      newJob({
-        campaignId: campaign.id,
-        contactId: contact.id,
-        mailboxId: mailbox0.id,
-        stepIndex: 0,
-        scheduledAt: nowISO(),
-        sentAt: null,
-        status: "queued",
-        bounceType: null,
-        blockReason: "",
-        subject: rendered,
-        preview: body.slice(0, 180),
-        toEmail: contact.email.toLowerCase(),
-      }),
-    );
-  }
+  const queuedNow = enqueueBulkWave(state, campaign);
 
   const skipNote = skipped.length ? `跳过 ${skipped.length} 人。` : "";
-  const heldNote = held ? `一次最多 ${BULK_BATCH_SIZE} 个，还有 ${held} 人留到下一次。` : "";
   pushLog(
     state,
     "ok",
     "群发已排队",
-    `${campaign.name} · ${batch.length} 人 · 今日额度还剩 ${left} 封。${skipNote}${heldNote}`,
+    `${campaign.name} · 共 ${sendable.length} 人 · 本批 ${queuedNow} · 今日额度还剩 ${left} 封。${skipNote}`,
   );
 
   const tick = await processQueue(state, 1);
   const remain = state.jobs.filter((j) => j.campaignId === campaign.id && j.status === "queued").length;
+  const laterPeople = Math.max(0, sendable.length - queuedNow);
+  const laterNote = laterPeople ? `后面还有 ${laterPeople} 人，这一批发完会自动接着发。` : "";
   return {
     ok: true,
-    message: `已排队 ${batch.length} 人。${skipNote}${heldNote}今日还能发 ${left} 封，多出的次日自动继续。约每 25 秒发一封。${tick.message ?? ""}剩余排队 ${remain}。`,
-    data: { id: campaign.id, queued: batch.length, skipped: skipped.length, todayLeft: left },
+    message: `已开始，共 ${sendable.length} 人，本批 ${queuedNow} 个。${skipNote}${laterNote}约每 25 秒一封，今天额度用完就停，第二天自动继续。${tick.message ?? ""}剩余排队 ${remain}。`,
+    data: { id: campaign.id, queued: sendable.length, skipped: skipped.length, todayLeft: left },
   };
 }
 
@@ -838,10 +881,11 @@ export async function processQueue(state: AppState, limit = 8): Promise<ActionRe
   }
 
   for (const c of state.campaigns.filter((x) => x.status === "running" || x.status === "paused")) {
+    if (c.status === "running") enqueueBulkWave(state, c);
     const related = state.jobs.filter((j) => j.campaignId === c.id);
-    if (related.length && related.every((j) => j.status !== "queued")) {
-      c.status = "completed";
-    }
+    const queued = related.some((j) => j.status === "queued");
+    const untouched = isBulkCampaign(c) && c.contactIds.some((id) => !related.some((j) => j.contactId === id));
+    if (related.length && !queued && !untouched) c.status = "completed";
   }
 
   if (sent > 0 || blocked > 0) {

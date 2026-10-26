@@ -71,6 +71,14 @@ export default function BlastPage() {
       const email = (job.toEmail || byId.get(job.contactId) || "").toLowerCase();
       if (email) emails.add(email);
     }
+    for (const campaign of state?.campaigns ?? []) {
+      if (campaign.status !== "running" && campaign.status !== "paused") continue;
+      if (campaign.kind !== "bulk" && !(campaign.subject && !campaign.sequenceId)) continue;
+      for (const id of campaign.contactIds) {
+        const email = byId.get(id);
+        if (email) emails.add(email);
+      }
+    }
     return emails;
   }, [state]);
   const eligible = useMemo(
@@ -97,8 +105,8 @@ export default function BlastPage() {
 
   const box = state.mailboxes.find((m) => m.id === mailboxId);
   const left = box ? Math.max(0, box.effectiveCap - box.sentToday) : 0;
-  const todaySend = Math.min(ids.length, left);
-  const later = Math.max(0, ids.length - todaySend);
+  const todaySend = Math.min(BULK_BATCH_SIZE, eligible.length, left);
+  const later = Math.max(0, eligible.length - todaySend);
 
   function pickTwenty() {
     setSelected(pickIds(eligible.map((c) => c.id)));
@@ -119,9 +127,8 @@ export default function BlastPage() {
       setError(HYPERLINK_ERROR);
       return;
     }
-    const used = new Set(ids);
-    const r = await mutate("startBulk", { mailboxId, contactIds: ids, subject, body, name });
-    if (r.ok) setSelected(pickIds(eligible.filter((c) => !used.has(c.id)).map((c) => c.id)));
+    const r = await mutate("startBulk", { mailboxId, contactIds: eligible.map((c) => c.id), subject, body, name });
+    if (r.ok) setSelected({});
   }
 
   const blasts = state.campaigns.filter((c) => c.kind === "bulk" || Boolean(c.subject)).slice().reverse();
@@ -130,8 +137,8 @@ export default function BlastPage() {
     <>
       <PageHead
         kicker="02 / 群发"
-        title="每次发 20 个还没发过的人"
-        desc="默认勾选 20 个尚未发过的邮箱。已经发过的不会再发。正文不能放网址。今天额度用完就停，第二天自动继续，约每 25 秒一封。"
+        title="按顺序一批批发"
+        desc="还没发过的人按名单顺序走，每批 20 个。这一批发完会自动接下一批。已经发过的不会再发。正文不能放网址。今天额度用完就停，第二天自动继续，约每 25 秒一封。"
       />
       {error ? <Banner kind="danger">{error}</Banner> : null}
       {notice ? <Banner kind="ok">{notice}</Banner> : null}
@@ -175,11 +182,11 @@ export default function BlastPage() {
           <p className="text-[12px] text-mist">可用变量：{"{{firstName}}"} {"{{company}}"} {"{{lastName}}"}。不要写网址或超链接。</p>
 
           <div className="flex flex-wrap items-center gap-2">
-            <button className="btn btn-amber" disabled={busy || live.length === 0 || ids.length === 0} type="submit">
-              {busy ? "排队中…" : `开始群发（${ids.length} 人）`}
+            <button className="btn btn-amber" disabled={busy || live.length === 0 || eligible.length === 0} type="submit">
+              {busy ? "排队中…" : `开始群发（${eligible.length} 人，每批 ${BULK_BATCH_SIZE}）`}
             </button>
             <span className="num text-sm text-mist">
-              {box ? `今日可发 ${todaySend} · 留到明天 ${later} · 额度 ${left}/${box.effectiveCap}` : ""}
+              {box ? `本批最多 ${todaySend} · 之后还有 ${later} · 今日额度 ${left}/${box.effectiveCap}` : ""}
             </span>
           </div>
         </form>
@@ -197,7 +204,7 @@ export default function BlastPage() {
             </div>
           </div>
           <p className="mt-1 text-[12px] text-mist">
-            已发过 {sentEmails.size} 个，排队中的也不会再出现。一次最多勾 {BULK_BATCH_SIZE} 个。
+            已发过 {sentEmails.size} 个。点开始后整份未发送名单都会排队，每批 {BULK_BATCH_SIZE} 个，发完自动继续。
           </p>
           <ul className="mt-3 max-h-[28rem] space-y-1 overflow-auto">
             {eligible.length === 0 ? <li className="text-sm text-mist">没有可发的联系人。</li> : null}
