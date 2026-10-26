@@ -43,11 +43,6 @@ export function seedState(): AppState {
   };
 }
 
-function isGmailAddress(email: string): boolean {
-  const e = email.toLowerCase();
-  return e.endsWith("@gmail.com") || e.endsWith("@googlemail.com");
-}
-
 function hasDemoJunk(state: AppState): boolean {
   const blob = `${state.settings.companyName} ${state.settings.physicalAddress}`;
   if (/北境|Northbound|外马路/i.test(blob)) return true;
@@ -58,11 +53,7 @@ function hasDemoJunk(state: AppState): boolean {
   return false;
 }
 
-function isConfiguredMailbox(mailbox: AppState["mailboxes"][number]): boolean {
-  return Boolean(mailbox.email?.trim() && mailbox.smtpPass?.trim());
-}
-
-/** Strip leftover demo records once. Never rewrite a Gmail mailbox the user already saved. */
+/** Strip leftover demo records once. Saved mailbox addresses are never changed or removed. */
 export function sanitizeState(state: AppState): boolean {
   const before = JSON.stringify(state);
 
@@ -73,32 +64,11 @@ export function sanitizeState(state: AppState): boolean {
   }
   const gmail = domain;
 
-  for (const m of state.mailboxes) {
-    if (isConfiguredMailbox(m)) continue;
-    if (!m.smtpHost) m.smtpHost = "smtp.gmail.com";
-    if (!m.smtpPort) m.smtpPort = 587;
-    if (!m.smtpUser) m.smtpUser = m.email;
-    if (!m.domainId) m.domainId = gmail.id;
-  }
-
   if (!hasDemoJunk(state)) {
     return JSON.stringify(state) !== before;
   }
 
   state.domains = [gmail];
-
-  state.mailboxes = state.mailboxes
-    .filter((m) => isConfiguredMailbox(m) || (isGmailAddress(m.email) && (m.smtpHost.includes("gmail") || !m.smtpHost)))
-    .map((m) =>
-      isConfiguredMailbox(m)
-        ? m
-        : {
-            ...m,
-            domainId: gmail.id,
-            smtpHost: m.smtpHost || "smtp.gmail.com",
-            smtpUser: m.smtpUser || m.email,
-          },
-    );
 
   const mailboxIds = new Set(state.mailboxes.map((m) => m.id));
   state.contacts = state.contacts.filter(

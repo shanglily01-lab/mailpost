@@ -16,31 +16,15 @@ fi
 
 cd "${APP_DIR}"
 
-mailbox_count() {
-  local f="$1"
-  if [[ ! -s "${f}" ]]; then
-    echo 0
-    return
-  fi
-  node -e 'try{const s=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); const n=Array.isArray(s.mailboxes)?s.mailboxes.filter((m)=>m&&m.email&&m.smtpPass).length:0; process.stdout.write(String(n));}catch{process.stdout.write("0")}' "${f}" 2>/dev/null || echo 0
-}
-
 echo "==> 保护已设置的邮箱 ${DATA_DIR}"
 sudo mkdir -p "${DATA_DIR}/outbox"
-DEST_BOXES="$(mailbox_count "${DATA_DIR}/mailpost.json")"
-APP_BOXES="$(mailbox_count "${APP_DIR}/data/mailpost.json")"
-if [[ "${DEST_BOXES}" != "0" ]]; then
+# 服务器上的邮箱只活在这个文件里。更新代码时永远不要用仓库或本机的 data/mailpost.json 覆盖它。
+if sudo test -s "${DATA_DIR}/mailpost.json"; then
   sudo cp -a "${DATA_DIR}/mailpost.json" "${DATA_DIR}/mailpost.json.bak-$(date +%F-%H%M%S)"
-  echo "    已有 ${DEST_BOXES} 个邮箱，只备份，不覆盖"
-elif [[ "${APP_BOXES}" != "0" ]]; then
-  sudo cp -a "${APP_DIR}/data/mailpost.json" "${DATA_DIR}/mailpost.json"
-  echo "    外部数据还没有邮箱，已从 ${APP_DIR}/data 迁入 ${APP_BOXES} 个"
-elif ls -1 "${DATA_DIR}"/mailpost.json.bak-* >/dev/null 2>&1; then
-  latest=$(ls -1t "${DATA_DIR}"/mailpost.json.bak-* | head -1)
-  if [[ "$(mailbox_count "${latest}")" != "0" ]]; then
-    sudo cp -a "${latest}" "${DATA_DIR}/mailpost.json"
-    echo "    当前没有邮箱，已从备份恢复 ${latest}"
-  fi
+  echo "    已备份，不覆盖现有邮箱"
+else
+  echo "    没有 ${DATA_DIR}/mailpost.json。脚本不会从代码目录拷贝，避免把旧的邮箱名单盖上去。"
+  echo "    若要找回，在 ${DATA_DIR}/mailpost.json.bak-* 里选一份再拷回来。"
 fi
 sudo chown -R "${APP_USER}:${APP_USER}" "${DATA_DIR}"
 sudo chmod 700 "${DATA_DIR}"
