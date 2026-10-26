@@ -2,6 +2,7 @@ export const MAX_DAILY_PER_MAILBOX = 50;
 export const DEFAULT_DAILY_CAP = 40;
 export const WARMUP_DAYS = 21;
 export const IMPORT_ROW_CAP = 200;
+export const BULK_BATCH_SIZE = 20;
 export const BOUNCE_KILL = 0.02;
 export const SPAM_KILL = 0.001;
 

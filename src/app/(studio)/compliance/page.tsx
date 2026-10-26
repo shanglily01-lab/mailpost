@@ -30,7 +30,7 @@ export default function CompliancePage() {
 
   return (
     <>
-      <PageHead kicker="07 / 设置" title="签名和退订" desc="显示名会作为私人信签名。退订链接只加在群发上，而且必须是 https 域名，不要填 localhost 或 IP，否则容易进垃圾箱。" />
+      <PageHead kicker="07 / 设置" title="签名和退订" desc="显示名会作为私人信签名。正文里不能写网址。退订地址只放在邮件头里，不会写进正文。" />
       {error ? <Banner kind="danger">{error}</Banner> : null}
       {notice ? <Banner kind="ok">{notice}</Banner> : null}
 

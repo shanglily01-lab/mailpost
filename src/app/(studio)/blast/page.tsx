@@ -3,6 +3,8 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useMailpost } from "@/lib/client";
 import { Banner, Field, PageHead, Stamp } from "@/components/ui";
+import { BULK_BATCH_SIZE } from "@/lib/constants";
+import { containsHyperlink, HYPERLINK_ERROR } from "@/lib/template";
 
 const statusTone = {
   draft: "mist",
@@ -20,8 +22,14 @@ const statusLabel = {
   killed: "已熔断",
 } as const;
 
+function pickIds(ids: string[]): Record<string, boolean> {
+  const next: Record<string, boolean> = {};
+  for (const id of ids.slice(0, BULK_BATCH_SIZE)) next[id] = true;
+  return next;
+}
+
 export default function BlastPage() {
-  const { state, error, notice, busy, mutate, refresh } = useMailpost();
+  const { state, error, notice, busy, mutate, refresh, setError } = useMailpost();
   const live = useMemo(() => state?.mailboxes ?? [], [state]);
   const [mailboxId, setMailboxId] = useState("");
   const [selected, setSelected] = useState<Record<string, boolean>>({});
@@ -29,6 +37,7 @@ export default function BlastPage() {
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
   const [name, setName] = useState("");
+  const [seeded, setSeeded] = useState(false);
 
   useEffect(() => {
     if (live.some((m) => m.id === mailboxId)) return;
@@ -44,19 +53,55 @@ export default function BlastPage() {
     return () => clearInterval(t);
   }, [running, refresh]);
 
+  const sentEmails = useMemo(() => {
+    const byId = new Map((state?.contacts ?? []).map((c) => [c.id, c.email.toLowerCase()]));
+    const emails = new Set<string>();
+    for (const job of state?.jobs ?? []) {
+      if (job.status !== "sent" && job.status !== "bounced" && job.status !== "replied") continue;
+      const email = (job.toEmail || byId.get(job.contactId) || "").toLowerCase();
+      if (email) emails.add(email);
+    }
+    return emails;
+  }, [state]);
+  const queuedEmails = useMemo(() => {
+    const byId = new Map((state?.contacts ?? []).map((c) => [c.id, c.email.toLowerCase()]));
+    const emails = new Set<string>();
+    for (const job of state?.jobs ?? []) {
+      if (job.status !== "queued") continue;
+      const email = (job.toEmail || byId.get(job.contactId) || "").toLowerCase();
+      if (email) emails.add(email);
+    }
+    return emails;
+  }, [state]);
+  const eligible = useMemo(
+    () =>
+      (state?.contacts ?? []).filter(
+        (c) =>
+          !c.unsubscribed &&
+          !c.suppressed &&
+          c.source !== "purchased" &&
+          !sentEmails.has(c.email.toLowerCase()) &&
+          !queuedEmails.has(c.email.toLowerCase()),
+      ),
+    [state, sentEmails, queuedEmails],
+  );
+  const ids = eligible.filter((c) => selected[c.id]).map((c) => c.id);
+
+  useEffect(() => {
+    if (seeded || eligible.length === 0) return;
+    setSeeded(true);
+    setSelected(pickIds(eligible.map((c) => c.id)));
+  }, [seeded, eligible]);
+
   if (!state) return <div className="p-10 text-mist">{error || "加载中…"}</div>;
 
   const box = state.mailboxes.find((m) => m.id === mailboxId);
   const left = box ? Math.max(0, box.effectiveCap - box.sentToday) : 0;
-  const ids = Object.keys(selected).filter((id) => selected[id]);
-  const eligible = state.contacts.filter((c) => !c.unsubscribed && !c.suppressed && c.source !== "purchased");
   const todaySend = Math.min(ids.length, left);
   const later = Math.max(0, ids.length - todaySend);
 
-  function toggleAll(on: boolean) {
-    const next: Record<string, boolean> = {};
-    if (on) for (const c of eligible) next[c.id] = true;
-    setSelected(next);
+  function pickTwenty() {
+    setSelected(pickIds(eligible.map((c) => c.id)));
   }
 
   function applyScript(id: string) {
@@ -70,8 +115,13 @@ export default function BlastPage() {
 
   async function onStart(e: FormEvent) {
     e.preventDefault();
+    if (containsHyperlink(subject) || containsHyperlink(body)) {
+      setError(HYPERLINK_ERROR);
+      return;
+    }
+    const used = new Set(ids);
     const r = await mutate("startBulk", { mailboxId, contactIds: ids, subject, body, name });
-    if (r.ok) setSelected({});
+    if (r.ok) setSelected(pickIds(eligible.filter((c) => !used.has(c.id)).map((c) => c.id)));
   }
 
   const blasts = state.campaigns.filter((c) => c.kind === "bulk" || Boolean(c.subject)).slice().reverse();
@@ -80,8 +130,8 @@ export default function BlastPage() {
     <>
       <PageHead
         kicker="02 / 群发"
-        title="勾一批人，按日限额排队发"
-        desc="同一封内容发给选中的联系人。今天额度用完就停，第二天自动继续。约每 25 秒一封，避免把 Gmail 打爆。"
+        title="每次发 20 个还没发过的人"
+        desc="默认勾选 20 个尚未发过的邮箱。已经发过的不会再发。正文不能放网址。今天额度用完就停，第二天自动继续，约每 25 秒一封。"
       />
       {error ? <Banner kind="danger">{error}</Banner> : null}
       {notice ? <Banner kind="ok">{notice}</Banner> : null}
@@ -122,7 +172,7 @@ export default function BlastPage() {
           <Field label="正文">
             <textarea className="field min-h-48" value={body} onChange={(e) => setBody(e.target.value)} required />
           </Field>
-          <p className="text-[12px] text-mist">可用变量：{"{{firstName}}"} {"{{company}}"} {"{{lastName}}"}。每封会按联系人替换。</p>
+          <p className="text-[12px] text-mist">可用变量：{"{{firstName}}"} {"{{company}}"} {"{{lastName}}"}。不要写网址或超链接。</p>
 
           <div className="flex flex-wrap items-center gap-2">
             <button className="btn btn-amber" disabled={busy || live.length === 0 || ids.length === 0} type="submit">
@@ -138,15 +188,17 @@ export default function BlastPage() {
           <div className="flex items-center justify-between gap-2">
             <h2 className="font-serif text-xl">收件人</h2>
             <div className="flex gap-2">
-              <button className="btn" type="button" onClick={() => toggleAll(true)}>
-                全选
+              <button className="btn" type="button" onClick={pickTwenty}>
+                选 20 个
               </button>
-              <button className="btn" type="button" onClick={() => toggleAll(false)}>
+              <button className="btn" type="button" onClick={() => setSelected({})}>
                 清空
               </button>
             </div>
           </div>
-          <p className="mt-1 text-[12px] text-mist">已退订或抑制的不会出现。</p>
+          <p className="mt-1 text-[12px] text-mist">
+            已发过 {sentEmails.size} 个，排队中的也不会再出现。一次最多勾 {BULK_BATCH_SIZE} 个。
+          </p>
           <ul className="mt-3 max-h-[28rem] space-y-1 overflow-auto">
             {eligible.length === 0 ? <li className="text-sm text-mist">没有可发的联系人。</li> : null}
             {eligible.map((c) => (
@@ -155,7 +207,13 @@ export default function BlastPage() {
                   <input
                     type="checkbox"
                     checked={Boolean(selected[c.id])}
-                    onChange={(e) => setSelected((prev) => ({ ...prev, [c.id]: e.target.checked }))}
+                    onChange={(e) => {
+                      if (e.target.checked && ids.length >= BULK_BATCH_SIZE) {
+                        setError(`一次最多发 ${BULK_BATCH_SIZE} 个邮箱。`);
+                        return;
+                      }
+                      setSelected((prev) => ({ ...prev, [c.id]: e.target.checked }));
+                    }}
                   />
                   <span>
                     <span className="block text-paper">{c.firstName || c.email}</span>

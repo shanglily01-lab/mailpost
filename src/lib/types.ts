@@ -141,6 +141,7 @@ export type SendJob = {
   blockReason: string;
   subject: string;
   preview: string;
+  toEmail?: string;
 };
 
 export type Activity = {

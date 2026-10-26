@@ -58,7 +58,11 @@ function hasDemoJunk(state: AppState): boolean {
   return false;
 }
 
-/** Strip leftover demo records once. Never delete a real Gmail mailbox the user added. */
+function isConfiguredMailbox(mailbox: AppState["mailboxes"][number]): boolean {
+  return Boolean(mailbox.email?.trim() && mailbox.smtpPass?.trim());
+}
+
+/** Strip leftover demo records once. Never rewrite a Gmail mailbox the user already saved. */
 export function sanitizeState(state: AppState): boolean {
   const before = JSON.stringify(state);
 
@@ -67,28 +71,34 @@ export function sanitizeState(state: AppState): boolean {
     domain = gmailDomain();
     state.domains.push(domain);
   }
+  const gmail = domain;
 
   for (const m of state.mailboxes) {
+    if (isConfiguredMailbox(m)) continue;
     if (!m.smtpHost) m.smtpHost = "smtp.gmail.com";
     if (!m.smtpPort) m.smtpPort = 587;
     if (!m.smtpUser) m.smtpUser = m.email;
-    if (!m.domainId) m.domainId = domain.id;
+    if (!m.domainId) m.domainId = gmail.id;
   }
 
   if (!hasDemoJunk(state)) {
     return JSON.stringify(state) !== before;
   }
 
-  state.domains = [domain];
+  state.domains = [gmail];
 
   state.mailboxes = state.mailboxes
-    .filter((m) => isGmailAddress(m.email) && (m.smtpHost.includes("gmail") || !m.smtpHost))
-    .map((m) => ({
-      ...m,
-      domainId: domain.id,
-      smtpHost: m.smtpHost || "smtp.gmail.com",
-      smtpUser: m.smtpUser || m.email,
-    }));
+    .filter((m) => isConfiguredMailbox(m) || (isGmailAddress(m.email) && (m.smtpHost.includes("gmail") || !m.smtpHost)))
+    .map((m) =>
+      isConfiguredMailbox(m)
+        ? m
+        : {
+            ...m,
+            domainId: gmail.id,
+            smtpHost: m.smtpHost || "smtp.gmail.com",
+            smtpUser: m.smtpUser || m.email,
+          },
+    );
 
   const mailboxIds = new Set(state.mailboxes.map((m) => m.id));
   state.contacts = state.contacts.filter(

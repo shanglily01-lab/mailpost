@@ -1,4 +1,4 @@
-import { IMPORT_ROW_CAP, MAX_DAILY_PER_MAILBOX, WARMUP_DAYS } from "./constants";
+import { BULK_BATCH_SIZE, IMPORT_ROW_CAP, MAX_DAILY_PER_MAILBOX, WARMUP_DAYS } from "./constants";
 import { checkDomainAuth } from "./dns";
 import { nid, nowISO, todayISO, token } from "./id";
 import {
@@ -9,6 +9,7 @@ import {
   resetSentToday,
 } from "./safety";
 import { buildMessage, canLiveSend, deliver, explainSmtpError, newJob, verifySmtp } from "./send";
+import { containsHyperlink, HYPERLINK_ERROR } from "./template";
 import { pushLog } from "./store";
 import { renderTemplate } from "./template";
 import type {
@@ -353,6 +354,9 @@ export function saveSequence(
   if (input.steps.some((s) => !s.subject.trim() || !s.body.trim())) {
     return { ok: false, error: "每封话术都要有标题和正文。" };
   }
+  if (input.steps.some((s) => containsHyperlink(s.subject) || containsHyperlink(s.body))) {
+    return { ok: false, error: HYPERLINK_ERROR };
+  }
   const existing = input.id ? state.sequences.find((s) => s.id === input.id) : undefined;
   if (existing) {
     existing.name = input.name.trim() || existing.name;
@@ -522,6 +526,7 @@ export function launchCampaign(state: AppState, campaignId: string): ActionResul
           blockReason: "",
           subject: msg.subject,
           preview: msg.body.slice(0, 180),
+          toEmail: contact.email.toLowerCase(),
         }),
       );
     });
@@ -559,6 +564,20 @@ function isBulkCampaign(campaign: Campaign): boolean {
   return campaign.kind === "bulk" || Boolean(campaign.subject && !campaign.sequenceId);
 }
 
+function jobEmail(state: AppState, job: { contactId: string; toEmail?: string }): string {
+  return (job.toEmail || state.contacts.find((c) => c.id === job.contactId)?.email || "").toLowerCase();
+}
+
+function emailsWithStatus(state: AppState, statuses: Set<string>): Set<string> {
+  const emails = new Set<string>();
+  for (const job of state.jobs) {
+    if (!statuses.has(job.status)) continue;
+    const email = jobEmail(state, job);
+    if (email) emails.add(email);
+  }
+  return emails;
+}
+
 export async function startBulk(
   state: AppState,
   input: { mailboxId: string; contactIds: string[]; subject: string; body: string; name?: string },
@@ -566,6 +585,14 @@ export async function startBulk(
   const subject = input.subject.trim();
   const body = input.body.trim();
   if (!subject || !body) return { ok: false, error: "标题和正文都要填。" };
+  if (
+    containsHyperlink(subject) ||
+    containsHyperlink(body) ||
+    containsHyperlink(state.settings.companyName) ||
+    containsHyperlink(state.settings.physicalAddress)
+  ) {
+    return { ok: false, error: HYPERLINK_ERROR };
+  }
 
   const mailbox0 = state.mailboxes.find((m) => m.id === input.mailboxId);
   if (!mailbox0) return { ok: false, error: "请选择发件邮箱。" };
@@ -580,12 +607,23 @@ export async function startBulk(
   const seen = new Set<string>();
   const sendable: Contact[] = [];
   const skipped: string[] = [];
+  const delivered = emailsWithStatus(state, new Set(["sent", "bounced", "replied"]));
+  const queued = emailsWithStatus(state, new Set(["queued"]));
   for (const id of input.contactIds) {
     if (seen.has(id)) continue;
     seen.add(id);
     const contact = state.contacts.find((c) => c.id === id);
     if (!contact) {
       skipped.push("有联系人已被删除");
+      continue;
+    }
+    const email = contact.email.toLowerCase();
+    if (delivered.has(email)) {
+      skipped.push(`${contact.email} 已经发过`);
+      continue;
+    }
+    if (queued.has(email)) {
+      skipped.push(`${contact.email} 已在发送队列`);
       continue;
     }
     if (contact.unsubscribed || contact.suppressed) {
@@ -599,17 +637,18 @@ export async function startBulk(
     sendable.push(contact);
   }
 
-  if (!sendable.length) return { ok: false, error: "没有可发的联系人。退订、抑制和购买名单会被跳过。" };
-  if (sendable.length > IMPORT_ROW_CAP) {
-    return { ok: false, error: `一次最多 ${IMPORT_ROW_CAP} 人，请拆开再发。` };
+  if (!sendable.length) {
+    return { ok: false, error: skipped[0] || "没有可发的联系人。已经发过、退订和购买名单会被跳过。" };
   }
+  const batch = sendable.slice(0, BULK_BATCH_SIZE);
+  const held = sendable.length - batch.length;
 
   const campaign: Campaign = {
     id: nid(),
     name: input.name?.trim() || subject.slice(0, 24) || "群发",
     sequenceId: "",
     mailboxIds: [mailbox0.id],
-    contactIds: sendable.map((c) => c.id),
+    contactIds: batch.map((c) => c.id),
     status: "running",
     killReason: "",
     createdAt: nowISO(),
@@ -620,7 +659,7 @@ export async function startBulk(
   };
   state.campaigns.push(campaign);
 
-  for (const contact of sendable) {
+  for (const contact of batch) {
     const rendered = renderTemplate(subject, contact);
     state.jobs.push(
       newJob({
@@ -635,24 +674,26 @@ export async function startBulk(
         blockReason: "",
         subject: rendered,
         preview: body.slice(0, 180),
+        toEmail: contact.email.toLowerCase(),
       }),
     );
   }
 
   const skipNote = skipped.length ? `跳过 ${skipped.length} 人。` : "";
+  const heldNote = held ? `一次最多 ${BULK_BATCH_SIZE} 个，还有 ${held} 人留到下一次。` : "";
   pushLog(
     state,
     "ok",
     "群发已排队",
-    `${campaign.name} · ${sendable.length} 人 · 今日额度还剩 ${left} 封。${skipNote}`,
+    `${campaign.name} · ${batch.length} 人 · 今日额度还剩 ${left} 封。${skipNote}${heldNote}`,
   );
 
   const tick = await processQueue(state, 1);
   const remain = state.jobs.filter((j) => j.campaignId === campaign.id && j.status === "queued").length;
   return {
     ok: true,
-    message: `已排队 ${sendable.length} 人。${skipNote}今日还能发 ${left} 封，多出的次日自动继续。约每 25 秒发一封。${tick.message ?? ""}剩余排队 ${remain}。`,
-    data: { id: campaign.id, queued: sendable.length, skipped: skipped.length, todayLeft: left },
+    message: `已排队 ${batch.length} 人。${skipNote}${heldNote}今日还能发 ${left} 封，多出的次日自动继续。约每 25 秒发一封。${tick.message ?? ""}剩余排队 ${remain}。`,
+    data: { id: campaign.id, queued: batch.length, skipped: skipped.length, todayLeft: left },
   };
 }
 
@@ -674,6 +715,7 @@ export async function processQueue(state: AppState, limit = 8): Promise<ActionRe
   let sent = 0;
   let blocked = 0;
   const now = new Date();
+  const delivered = emailsWithStatus(state, new Set(["sent", "bounced", "replied"]));
 
   for (const job of due) {
     if (sent >= limit) break;
@@ -703,7 +745,14 @@ export async function processQueue(state: AppState, limit = 8): Promise<ActionRe
     const cap = mailboxEffectiveCap(mailbox0, now);
     if (cap <= 0 || mailbox0.sentToday >= cap) continue;
 
+    const recipient = jobEmail(state, job) || contact.email.toLowerCase();
+
     if (isBulkCampaign(campaign)) {
+      if (delivered.has(recipient)) {
+        job.status = "skipped";
+        job.blockReason = "这个邮箱已经发过";
+        continue;
+      }
       if (!canLiveSend(mailbox0)) {
         job.status = "blocked";
         job.blockReason = "SMTP 未配置";
@@ -712,6 +761,12 @@ export async function processQueue(state: AppState, limit = 8): Promise<ActionRe
       }
       const subjectRendered = renderTemplate(campaign.subject || job.subject, contact);
       const fullBody = renderTemplate(campaign.body || "", contact);
+      if (containsHyperlink(subjectRendered) || containsHyperlink(fullBody)) {
+        job.status = "blocked";
+        job.blockReason = HYPERLINK_ERROR;
+        blocked += 1;
+        continue;
+      }
       try {
         await deliver({
           state,
@@ -734,6 +789,7 @@ export async function processQueue(state: AppState, limit = 8): Promise<ActionRe
       job.preview = (campaign.body || "").slice(0, 180);
       mailbox0.sentToday += 1;
       sent += 1;
+      delivered.add(recipient);
       continue;
     }
 
@@ -757,6 +813,12 @@ export async function processQueue(state: AppState, limit = 8): Promise<ActionRe
     }
 
     const msg = buildMessage(state, contact, step);
+    if (containsHyperlink(msg.subject) || containsHyperlink(msg.body)) {
+      job.status = "blocked";
+      job.blockReason = HYPERLINK_ERROR;
+      blocked += 1;
+      continue;
+    }
     try {
       await deliver({ state, mailbox: mailbox0, contact, subject: msg.subject, body: msg.body });
     } catch (err) {
@@ -772,6 +834,7 @@ export async function processQueue(state: AppState, limit = 8): Promise<ActionRe
     job.preview = msg.body.slice(0, 180);
     mailbox0.sentToday += 1;
     sent += 1;
+    delivered.add(recipient);
   }
 
   for (const c of state.campaigns.filter((x) => x.status === "running" || x.status === "paused")) {
@@ -851,6 +914,14 @@ export async function sendOnce(
   const subject = input.subject.trim();
   const body = input.body.trim();
   if (!to || !subject || !body) return { ok: false, error: "收件人、标题、正文都要填。" };
+  if (
+    containsHyperlink(subject) ||
+    containsHyperlink(body) ||
+    containsHyperlink(state.settings.companyName) ||
+    containsHyperlink(state.settings.physicalAddress)
+  ) {
+    return { ok: false, error: HYPERLINK_ERROR };
+  }
 
   const mailbox0 = state.mailboxes.find((m) => m.id === input.mailboxId);
   if (!mailbox0) return { ok: false, error: "请选择发件邮箱。" };
@@ -933,6 +1004,7 @@ export async function sendOnce(
       blockReason: "",
       subject: subjectRendered,
       preview: body.slice(0, 180),
+      toEmail: to,
     }),
   );
   pushLog(state, "ok", "已发送", `${mailbox0.email} → ${to}`);

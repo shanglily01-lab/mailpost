@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from "fs";
 import path from "path";
 import nodemailer from "nodemailer";
 import type { AppState, Contact, Mailbox, SendJob, SequenceStep } from "./types";
-import { renderTemplate, signatureFooter } from "./template";
+import { containsHyperlink, HYPERLINK_ERROR, renderTemplate, signatureFooter } from "./template";
 import { nid, nowISO } from "./id";
 import { dataDir } from "./store";
 
@@ -34,9 +34,8 @@ export function buildMessage(
   contact: Contact,
   step: SequenceStep,
 ): { subject: string; body: string } {
-  const url = publicUnsubUrl(state, contact);
   const subject = renderTemplate(step.subject, contact);
-  const body = renderTemplate(step.body, contact, { unsubUrl: url }) + signatureFooter(state.settings, url);
+  const body = renderTemplate(step.body, contact) + signatureFooter(state.settings, "");
   return { subject, body };
 }
 
@@ -124,10 +123,7 @@ async function tryPorts<T>(mailbox: Mailbox, fn: (box: Mailbox) => Promise<T>): 
   let last: unknown;
   for (const candidate of portCandidates(mailbox)) {
     try {
-      const result = await withSmtpRetry(() => fn(candidate));
-      mailbox.smtpPort = candidate.smtpPort;
-      mailbox.smtpSecure = candidate.smtpSecure;
-      return result;
+      return await withSmtpRetry(() => fn(candidate));
     } catch (err) {
       last = err;
     }
@@ -158,8 +154,11 @@ export async function deliver(opts: {
 }): Promise<{ sandbox: boolean; path?: string }> {
   const kind = opts.kind ?? "direct";
   const unsub = kind === "bulk" ? publicUnsubUrl(opts.state, opts.contact) : "";
-  const footer = signatureFooter(opts.state.settings, unsub);
+  const footer = signatureFooter(opts.state.settings, "");
   const body = footer ? `${opts.body}${opts.body.endsWith("\n") ? "" : "\n"}${footer}` : opts.body;
+  if (containsHyperlink(opts.subject) || containsHyperlink(body)) {
+    throw new Error(HYPERLINK_ERROR);
+  }
   const headers: Record<string, string> = {};
   if (unsub) headers["List-Unsubscribe"] = `<${unsub}>`;
 

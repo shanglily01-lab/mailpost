@@ -4,9 +4,10 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useMailpost } from "@/lib/client";
 import { Banner, Field, PageHead } from "@/components/ui";
+import { containsHyperlink, HYPERLINK_ERROR } from "@/lib/template";
 
 export default function ComposePage() {
-  const { state, error, notice, busy, mutate } = useMailpost();
+  const { state, error, notice, busy, mutate, setError } = useMailpost();
   const live = useMemo(() => state?.mailboxes ?? [], [state]);
   const [mailboxId, setMailboxId] = useState("");
   const [contactId, setContactId] = useState("");
@@ -47,6 +48,10 @@ export default function ComposePage() {
 
   async function onSend(e: FormEvent) {
     e.preventDefault();
+    if (containsHyperlink(subject) || containsHyperlink(body)) {
+      setError(HYPERLINK_ERROR);
+      return;
+    }
     const r = await mutate("sendOnce", { mailboxId, to, firstName, subject, body });
     if (r.ok) {
       setTo("");
@@ -56,6 +61,10 @@ export default function ComposePage() {
   }
 
   async function saveScript() {
+    if (containsHyperlink(subject) || containsHyperlink(body)) {
+      setError(HYPERLINK_ERROR);
+      return;
+    }
     const r = await mutate("saveSequence", {
       id: scriptId || undefined,
       name: scriptName.trim() || subject.slice(0, 24) || "未命名话术",
@@ -67,7 +76,7 @@ export default function ComposePage() {
 
   return (
     <>
-      <PageHead kicker="01 / 写信" title="用 Gmail 发一封" desc="选联系人或手填地址，可套用已保存的话术。要发给多人，到「群发」按日限额排队。" />
+      <PageHead kicker="01 / 写信" title="用 Gmail 发一封" desc="选联系人或手填地址，可套用已保存的话术。正文不要放网址。要发给多人，到「群发」按每次 20 个排队。" />
       {error ? <Banner kind="danger">{error}</Banner> : null}
       {notice ? <Banner kind="ok">{notice}</Banner> : null}
 

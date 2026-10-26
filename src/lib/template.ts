@@ -23,6 +23,20 @@ export function renderTemplate(
   return text.replace(VAR, (_, key: string) => map[key] ?? "");
 }
 
+export function containsHyperlink(text: string): boolean {
+  const stripped = text.replace(/\{\{\s*unsubUrl\s*\}\}/g, "");
+  return (
+    /https?:\/\//i.test(stripped) ||
+    /www\./i.test(stripped) ||
+    /mailto:/i.test(stripped) ||
+    /<a\b/i.test(stripped) ||
+    /\bhref\s*=/i.test(stripped) ||
+    /\[[^\]]*\]\([^)]+\)/.test(stripped)
+  );
+}
+
+export const HYPERLINK_ERROR = "邮件里不能放超链接。请删掉网址后再发。";
+
 export function lintCopy(subject: string, body: string): Gate[] {
   const gates: Gate[] = [];
   const blob = `${subject}\n${body}`;
@@ -47,12 +61,11 @@ export function lintCopy(subject: string, body: string): Gate[] {
     });
   }
 
-  const withoutUnsub = blob.replace(/\{\{\s*unsubUrl\s*\}\}/g, "");
-  if (/https?:\/\//i.test(withoutUnsub) || /www\./i.test(withoutUnsub)) {
+  if (containsHyperlink(blob)) {
     gates.push({
       code: "TEMPLATE_PROMO",
       severity: "block",
-      message: "检测到促销链接。冷邮件不要放落地页、图片或附件，系统只会自动附加退订地址。",
+      message: HYPERLINK_ERROR,
     });
   }
 
