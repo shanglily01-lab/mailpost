@@ -1,9 +1,10 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { ClipboardEvent, FormEvent, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useMailpost } from "@/lib/client";
 import { Banner, Field, PageHead } from "@/components/ui";
+import { pastedBody } from "@/lib/paste-links";
 export default function ComposePage() {
   const { state, error, notice, busy, mutate } = useMailpost();
   const live = useMemo(() => state?.mailboxes ?? [], [state]);
@@ -66,7 +67,7 @@ export default function ComposePage() {
 
   return (
     <>
-      <PageHead kicker="01 / 写信" title="用 Gmail 发一封" desc="选联系人或手填地址，可套用已保存的话术。正文里的网址会变成可点击的按钮。要发给多人，到「群发」按每次 20 个排队。" />
+      <PageHead kicker="01 / 写信" title="用 Gmail 发一封" desc="选联系人或手填地址，可套用已保存的话术。正文里的网址，以及从 Word 粘贴的超链接，都会变成可点击的按钮。要发给多人，到「群发」按每次 20 个排队。" />
       {error ? <Banner kind="danger">{error}</Banner> : null}
       {notice ? <Banner kind="ok">{notice}</Banner> : null}
 
@@ -118,7 +119,18 @@ export default function ComposePage() {
           <input className="field" value={subject} onChange={(e) => setSubject(e.target.value)} required />
         </Field>
         <Field label="正文">
-          <textarea className="field min-h-56" value={body} onChange={(e) => setBody(e.target.value)} required />
+          <textarea
+            className="field min-h-56"
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+            onPaste={(e: ClipboardEvent<HTMLTextAreaElement>) => {
+              const next = pastedBody(e.clipboardData, body, e.currentTarget.selectionStart ?? body.length, e.currentTarget.selectionEnd ?? body.length);
+              if (next == null) return;
+              e.preventDefault();
+              setBody(next);
+            }}
+            required
+          />
         </Field>
 
         <div className="flex flex-wrap items-center gap-2">

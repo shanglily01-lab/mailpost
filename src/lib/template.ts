@@ -36,32 +36,36 @@ function buttonLabel(href: string): string {
   }
 }
 
-function linkButton(href: string): string {
-  const label = escapeHtml(buttonLabel(href));
+function linkButton(href: string, label?: string): string {
+  const text = escapeHtml((label || buttonLabel(href)).trim() || buttonLabel(href));
   const safeHref = escapeHtml(href);
   return (
     `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:14px 0;"><tr>` +
     `<td bgcolor="#111111" style="border-radius:8px;">` +
-    `<a href="${safeHref}" target="_blank" style="display:inline-block;padding:12px 22px;font-family:sans-serif;font-size:15px;line-height:1.2;color:#ffffff;text-decoration:none;border-radius:8px;">${label}</a>` +
+    `<a href="${safeHref}" target="_blank" style="display:inline-block;padding:12px 22px;font-family:sans-serif;font-size:15px;line-height:1.2;color:#ffffff;text-decoration:none;border-radius:8px;">${text}</a>` +
     `</td></tr></table>`
   );
 }
 
-/** Plain-text URLs become button links in the HTML part. The text part keeps the same URL. */
+/** Plain-text URLs and Word-pasted [label](url) become button links. The text part keeps the same URL. */
 export function textToHtml(text: string): string {
-  const urlRe = /(?:https?:\/\/|www\.)[^\s<>"']+/gi;
+  const tokenRe = /\[([^\]\n]{1,200})\]\((https?:\/\/[^\s)]+)\)|(?:https?:\/\/|www\.)[^\s<>"']+/gi;
   const parts: string[] = [];
   let last = 0;
-  for (const match of text.matchAll(urlRe)) {
+  for (const match of text.matchAll(tokenRe)) {
     const index = match.index ?? 0;
     parts.push(escapeHtml(text.slice(last, index)).replace(/\n/g, "<br>\n"));
-    const raw = match[0];
-    const url = raw.replace(/[.,;:!?)]+$/, "");
-    const tail = raw.slice(url.length);
-    const href = /^www\./i.test(url) ? `https://${url}` : url;
-    parts.push(linkButton(href));
-    if (tail) parts.push(escapeHtml(tail));
-    last = index + raw.length;
+    if (match[1] && match[2]) {
+      parts.push(linkButton(match[2], match[1]));
+    } else {
+      const raw = match[0];
+      const url = raw.replace(/[.,;:!?)]+$/, "");
+      const tail = raw.slice(url.length);
+      const href = /^www\./i.test(url) ? `https://${url}` : url;
+      parts.push(linkButton(href));
+      if (tail) parts.push(escapeHtml(tail));
+    }
+    last = index + match[0].length;
   }
   parts.push(escapeHtml(text.slice(last)).replace(/\n/g, "<br>\n"));
   return `<div style="font-family:sans-serif;font-size:15px;line-height:1.6;color:#111111;">${parts.join("")}</div>`;

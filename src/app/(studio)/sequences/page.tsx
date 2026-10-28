@@ -1,8 +1,9 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { ClipboardEvent, FormEvent, useEffect, useMemo, useState } from "react";
 import { useMailpost } from "@/lib/client";
 import { Banner, Field, PageHead } from "@/components/ui";
+import { pastedBody } from "@/lib/paste-links";
 import type { SequenceStep } from "@/lib/types";
 
 const blank: SequenceStep[] = [{ delayDays: 0, subject: "", body: "" }];
@@ -52,7 +53,7 @@ export default function SequencesPage() {
       <PageHead
         kicker="05 / 话术"
         title="自己写，随时改"
-        desc="标题和正文都是你的。可用 {{firstName}} {{company}}，网址会变成可点击的按钮。写信时会按联系人替换。保存后立刻生效。"
+        desc="标题和正文都是你的。可用 {{firstName}} {{company}}。网址和从 Word 粘贴的超链接都会变成可点击的按钮。写信时会按联系人替换。保存后立刻生效。"
         actions={
           <button className="btn" type="button" onClick={startNew}>
             新建
@@ -96,7 +97,17 @@ export default function SequencesPage() {
                 <input className="field" value={step.subject} onChange={(e) => patch(i, { subject: e.target.value })} />
               </Field>
               <Field label="正文">
-                <textarea className="field min-h-40" value={step.body} onChange={(e) => patch(i, { body: e.target.value })} />
+                <textarea
+                  className="field min-h-40"
+                  value={step.body}
+                  onChange={(e) => patch(i, { body: e.target.value })}
+                  onPaste={(e: ClipboardEvent<HTMLTextAreaElement>) => {
+                    const next = pastedBody(e.clipboardData, step.body, e.currentTarget.selectionStart ?? step.body.length, e.currentTarget.selectionEnd ?? step.body.length);
+                    if (next == null) return;
+                    e.preventDefault();
+                    patch(i, { body: next });
+                  }}
+                />
               </Field>
             </div>
           ))}
