@@ -7,6 +7,10 @@ import { nid, nowISO } from "./id";
 const DIR = path.resolve(process.env.MAILPOST_DATA_DIR || path.join(process.cwd(), "data"));
 const FILE = path.join(DIR, "mailpost.json");
 
+function dataFileLocked(): boolean {
+  return process.env.MAILPOST_SKIP_DATA === "1" || process.env.NEXT_PHASE === "phase-production-build";
+}
+
 let cache: AppState | null = null;
 let writing = Promise.resolve();
 
@@ -25,6 +29,10 @@ export function dataFile(): string {
 
 export function loadState(): AppState {
   if (cache) return cache;
+  if (dataFileLocked()) {
+    cache = seedState();
+    return cache;
+  }
   mkdirSync(DIR, { recursive: true });
   mkdirSync(path.join(DIR, "outbox"), { recursive: true });
 
@@ -39,6 +47,9 @@ export function loadState(): AppState {
 }
 
 export async function mutateState<T>(fn: (state: AppState) => T | Promise<T>): Promise<T> {
+  if (dataFileLocked()) {
+    return fn(loadState());
+  }
   const run = async () => {
     const state = loadState();
     const result = await fn(state);

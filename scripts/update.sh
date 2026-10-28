@@ -15,22 +15,23 @@ fi
 
 cd "${APP_DIR}"
 
-echo "==> 只更新代码，不碰 /var/lib/mailpost"
-# 代码目录里若有 root 拥有的 package-lock.json，npm 会 EACCES。只改 /opt/mailpost 的属主。
-sudo chown -R "${APP_USER}:${APP_USER}" "${APP_DIR}"
+echo "==> 只更新代码，不碰邮箱数据"
+# 只改代码文件的属主。data 目录和 /var/lib/mailpost 都不进这里。
+sudo find "${APP_DIR}" -mindepth 1 -maxdepth 1 ! -name data -exec chown -R "${APP_USER}:${APP_USER}" {} +
+sudo chown "${APP_USER}:${APP_USER}" "${APP_DIR}"
 echo "==> git pull"
 git pull --ff-only
 
 echo "==> 安装依赖并构建"
 # 服务器上的 npm 10 会对这份锁文件报缺 @emnapi。npm install 能装上，装完把锁文件还原，避免下次 pull 被本地改动挡住。
+# 构建期间禁止读写 mailpost.json，避免 next build 另写一份空邮箱文件。
 npm install --no-audit --no-fund
 git checkout -- package.json package-lock.json
-npm run build
+MAILPOST_SKIP_DATA=1 npm run build
 
 echo "==> 重启服务"
+# 不覆盖 systemd 单元。覆盖会改 MAILPOST_DATA_DIR，应用就会改读另一份邮箱文件。
 if [[ -f /etc/systemd/system/mailpost.service ]]; then
-  sudo cp "${APP_DIR}/docs/mailpost.service" /etc/systemd/system/mailpost.service
-  sudo systemctl daemon-reload
   sudo systemctl restart mailpost
   sleep 2
   sudo systemctl --no-pager --full status mailpost || true
