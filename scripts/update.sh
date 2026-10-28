@@ -15,30 +15,24 @@ fi
 
 cd "${APP_DIR}"
 
-echo "==> 只更新代码，不碰邮箱数据"
-# 只改代码文件的属主。data 目录和 /var/lib/mailpost 都不进这里。
+echo "==> 只更新代码。不读、不写、不覆盖邮箱文件，也不改 systemd。"
 sudo find "${APP_DIR}" -mindepth 1 -maxdepth 1 ! -name data -exec chown -R "${APP_USER}:${APP_USER}" {} +
 sudo chown "${APP_USER}:${APP_USER}" "${APP_DIR}"
 echo "==> git pull"
 git pull --ff-only
 
 echo "==> 安装依赖并构建"
-# 服务器上的 npm 10 会对这份锁文件报缺 @emnapi。npm install 能装上，装完把锁文件还原，避免下次 pull 被本地改动挡住。
-# 构建期间禁止读写 mailpost.json，避免 next build 另写一份空邮箱文件。
 npm install --no-audit --no-fund
 git checkout -- package.json package-lock.json
 MAILPOST_SKIP_DATA=1 npm run build
 
 echo "==> 重启服务"
-# 不覆盖 systemd 单元。覆盖会改 MAILPOST_DATA_DIR，应用就会改读另一份邮箱文件。
 if [[ -f /etc/systemd/system/mailpost.service ]]; then
   sudo systemctl restart mailpost
   sleep 2
   sudo systemctl --no-pager --full status mailpost || true
 else
-  echo "还没有 systemd 单元，先执行："
-  echo "  sudo cp ${APP_DIR}/docs/mailpost.service /etc/systemd/system/mailpost.service"
-  echo "  sudo systemctl daemon-reload && sudo systemctl enable --now mailpost"
+  echo "还没有 systemd 单元。更新脚本不会创建它，避免改到邮箱数据目录。"
   exit 1
 fi
 

@@ -46,24 +46,25 @@ fi
 
 cd "${APP_DIR}"
 sudo mkdir -p /var/lib/mailpost/outbox
-echo "    不从代码目录拷贝邮箱。服务器上的 Gmail 只在网页里接入，更新不会改。"
-sudo chown -R "${APP_USER}:${APP_USER}" /var/lib/mailpost
-sudo chmod 700 /var/lib/mailpost
-mkdir -p data/outbox
-chmod 700 data
 if [[ -f /var/lib/mailpost/mailpost.json ]]; then
-  chmod 600 /var/lib/mailpost/mailpost.json
+  echo "    已有邮箱文件，不改动。"
+else
+  echo "    邮箱目录已建好。不从代码目录拷贝，到网页里接入 Gmail。"
+  sudo chown -R "${APP_USER}:${APP_USER}" /var/lib/mailpost
+  sudo chmod 700 /var/lib/mailpost
 fi
 
 echo "==> 安装依赖并构建"
 rm -rf node_modules
 npm install
-npm run build
+MAILPOST_SKIP_DATA=1 npm run build
 
 echo "==> systemd"
-sudo cp "${APP_DIR}/docs/mailpost.service" /etc/systemd/system/mailpost.service
-sudo systemctl daemon-reload
-sudo systemctl enable mailpost
+if [[ ! -f /etc/systemd/system/mailpost.service ]]; then
+  sudo cp "${APP_DIR}/docs/mailpost.service" /etc/systemd/system/mailpost.service
+  sudo systemctl daemon-reload
+  sudo systemctl enable mailpost
+fi
 sudo systemctl restart mailpost
 
 echo "==> 本机防火墙（若 firewalld 在跑）"
