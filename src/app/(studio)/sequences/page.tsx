@@ -1,9 +1,9 @@
 "use client";
 
-import { ClipboardEvent, FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import { MailBodyField } from "@/components/MailBodyField";
 import { useMailpost } from "@/lib/client";
 import { Banner, Field, PageHead } from "@/components/ui";
-import { pastedBody } from "@/lib/paste-links";
 import type { SequenceStep } from "@/lib/types";
 
 const blank: SequenceStep[] = [{ delayDays: 0, subject: "", body: "" }];
@@ -97,17 +97,7 @@ export default function SequencesPage() {
                 <input className="field" value={step.subject} onChange={(e) => patch(i, { subject: e.target.value })} />
               </Field>
               <Field label="正文">
-                <textarea
-                  className="field min-h-40"
-                  value={step.body}
-                  onChange={(e) => patch(i, { body: e.target.value })}
-                  onPaste={(e: ClipboardEvent<HTMLTextAreaElement>) => {
-                    const next = pastedBody(e.clipboardData, step.body, e.currentTarget.selectionStart ?? step.body.length, e.currentTarget.selectionEnd ?? step.body.length);
-                    if (next == null) return;
-                    e.preventDefault();
-                    patch(i, { body: next });
-                  }}
-                />
+                <MailBodyField value={step.body} onChange={(body) => patch(i, { body })} className="min-h-40" />
               </Field>
             </div>
           ))}

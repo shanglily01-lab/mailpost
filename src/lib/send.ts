@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from "fs";
 import path from "path";
 import nodemailer from "nodemailer";
 import type { AppState, Contact, Mailbox, SendJob, SequenceStep } from "./types";
-import { renderTemplate, signatureFooter, textToHtml } from "./template";
+import { renderTemplate, signatureFooter, textToHtml, toPlainMail } from "./template";
 import { nid, nowISO } from "./id";
 import { dataDir } from "./store";
 
@@ -185,7 +185,7 @@ export async function deliver(opts: {
         from: `"${box.displayName}" <${box.email}>`,
         to: opts.contact.email,
         subject: opts.subject,
-        text: body,
+        text: toPlainMail(body),
         html: textToHtml(body),
         headers,
       });

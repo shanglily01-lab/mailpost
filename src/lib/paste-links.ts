@@ -1,11 +1,7 @@
+import { decodeHtmlEntities } from "./template";
+
 function decodeEntities(text: string): string {
-  return text
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;|&apos;/gi, "'");
+  return decodeHtmlEntities(text);
 }
 
 function normalizeHref(raw: string): string {
@@ -34,6 +30,53 @@ export function htmlToPlainWithLinks(html: string): string {
     .replace(/<[^>]+>/g, "")
     ;
   return decodeEntities(text).replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function emojiStart(line: string): boolean {
+  return /^\p{Extended_Pictographic}/u.test(line);
+}
+
+function joinWrapped(prev: string, next: string): boolean {
+  if (!prev || !next) return false;
+  if (emojiStart(next)) return false;
+  if (/^[—–-]/.test(next)) return true;
+  if (/^[a-z]/.test(next)) return true;
+  return false;
+}
+
+/** Word hard-wraps sentences and leaves emoji codes. Show the paragraph the way it was written. */
+export function tidyPastedText(text: string): string {
+  const lines = decodeHtmlEntities(text).replace(/\r\n/g, "\n").split("\n").map((line) => line.trim());
+  const merged: string[] = [];
+  for (const line of lines) {
+    if (!line) continue;
+    const prev = merged[merged.length - 1];
+    if (prev && joinWrapped(prev, line)) merged[merged.length - 1] = `${prev} ${line}`;
+    else merged.push(line);
+  }
+  return merged.join("\n");
+}
+
+function escapeEditor(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+/** Editor shows the words. The address stays on the link, not in the text. */
+export function bodyToEditorHtml(text: string): string {
+  if (!text) return "";
+  return text.split("\n").map((line) => {
+    const re = /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g;
+    let html = "";
+    let last = 0;
+    for (const match of line.matchAll(re)) {
+      const index = match.index ?? 0;
+      html += escapeEditor(line.slice(last, index));
+      html += `<a href="${escapeEditor(match[2])}" style="color:#f5c16c;font-weight:700;text-decoration:underline;">${escapeEditor(match[1])}</a>`;
+      last = index + match[0].length;
+    }
+    html += escapeEditor(line.slice(last));
+    return html || "<br>";
+  }).join("<br>");
 }
 
 export function pastedBody(data: DataTransfer, current: string, start: number, end: number): string | null {

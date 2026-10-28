@@ -1,10 +1,10 @@
 "use client";
 
-import { ClipboardEvent, FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { MailBodyField } from "@/components/MailBodyField";
 import { useMailpost } from "@/lib/client";
 import { Banner, Field, PageHead } from "@/components/ui";
-import { pastedBody } from "@/lib/paste-links";
 export default function ComposePage() {
   const { state, error, notice, busy, mutate } = useMailpost();
   const live = useMemo(() => state?.mailboxes ?? [], [state]);
@@ -119,18 +119,7 @@ export default function ComposePage() {
           <input className="field" value={subject} onChange={(e) => setSubject(e.target.value)} required />
         </Field>
         <Field label="正文">
-          <textarea
-            className="field min-h-56"
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-            onPaste={(e: ClipboardEvent<HTMLTextAreaElement>) => {
-              const next = pastedBody(e.clipboardData, body, e.currentTarget.selectionStart ?? body.length, e.currentTarget.selectionEnd ?? body.length);
-              if (next == null) return;
-              e.preventDefault();
-              setBody(next);
-            }}
-            required
-          />
+          <MailBodyField value={body} onChange={setBody} className="min-h-56" />
         </Field>
 
         <div className="flex flex-wrap items-center gap-2">

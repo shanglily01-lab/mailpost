@@ -1,10 +1,10 @@
 "use client";
 
-import { ClipboardEvent, FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import { MailBodyField } from "@/components/MailBodyField";
 import { useMailpost } from "@/lib/client";
 import { Banner, Field, PageHead, Stamp } from "@/components/ui";
 import { BULK_BATCH_SIZE } from "@/lib/constants";
-import { pastedBody } from "@/lib/paste-links";
 const statusTone = {
   draft: "mist",
   running: "amber",
@@ -172,20 +172,9 @@ export default function BlastPage() {
             <input className="field" value={subject} onChange={(e) => setSubject(e.target.value)} required />
           </Field>
           <Field label="正文">
-            <textarea
-            className="field min-h-48"
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-            onPaste={(e: ClipboardEvent<HTMLTextAreaElement>) => {
-              const next = pastedBody(e.clipboardData, body, e.currentTarget.selectionStart ?? body.length, e.currentTarget.selectionEnd ?? body.length);
-              if (next == null) return;
-              e.preventDefault();
-              setBody(next);
-            }}
-            required
-          />
+            <MailBodyField value={body} onChange={setBody} className="min-h-48" />
           </Field>
-          <p className="text-[12px] text-mist">可用变量：{"{{firstName}}"} {"{{company}}"} {"{{lastName}}"}。直接写 https:// 网址，或从 Word 粘贴带链接的文字，发出去是一颗按钮。</p>
+          <p className="text-[12px] text-mist">可用变量：{"{{firstName}}"} {"{{company}}"} {"{{lastName}}"}。从 Word 粘贴后只显示文字和表情，链接仍可点，发出去是按钮。</p>
 
           <div className="flex flex-wrap items-center gap-2">
             <button className="btn btn-amber" disabled={busy || live.length === 0 || eligible.length === 0} type="submit">

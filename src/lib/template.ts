@@ -27,6 +27,34 @@ function escapeHtml(text: string): string {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
+function codePointChar(code: number, fallback: string): string {
+  if (!Number.isFinite(code) || code < 0 || code > 0x10ffff) return fallback;
+  try {
+    return String.fromCodePoint(code);
+  } catch {
+    return fallback;
+  }
+}
+
+/** Word stores emoji as &#127873; or &amp;#127873;. Turn those into the character. */
+export function decodeHtmlEntities(text: string): string {
+  let out = text;
+  for (let i = 0; i < 3; i += 1) {
+    const next = out
+      .replace(/&nbsp;/gi, " ")
+      .replace(/&amp;/gi, "&")
+      .replace(/&lt;/gi, "<")
+      .replace(/&gt;/gi, ">")
+      .replace(/&quot;/gi, '"')
+      .replace(/&#39;|&apos;/gi, "'")
+      .replace(/&#x([0-9a-f]+);/gi, (all, hex: string) => codePointChar(Number.parseInt(hex, 16), all))
+      .replace(/&#(\d+);/g, (all, num: string) => codePointChar(Number(num), all));
+    if (next === out) break;
+    out = next;
+  }
+  return out;
+}
+
 function buttonLabel(href: string): string {
   try {
     const host = new URL(href).hostname.replace(/^www\./i, "");
@@ -36,39 +64,109 @@ function buttonLabel(href: string): string {
   }
 }
 
-function linkButton(href: string, label?: string): string {
+function inlineLink(href: string, label?: string): string {
   const text = escapeHtml((label || buttonLabel(href)).trim() || buttonLabel(href));
   const safeHref = escapeHtml(href);
-  return (
-    `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:14px 0;"><tr>` +
-    `<td bgcolor="#111111" style="border-radius:8px;">` +
-    `<a href="${safeHref}" target="_blank" style="display:inline-block;padding:12px 22px;font-family:sans-serif;font-size:15px;line-height:1.2;color:#ffffff;text-decoration:none;border-radius:8px;">${text}</a>` +
-    `</td></tr></table>`
-  );
+  return `<a href="${safeHref}" target="_blank" style="display:inline-block;padding:2px 10px;margin:0 2px;background:#111111;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:700;line-height:1.5;vertical-align:baseline;">${text}</a>`;
 }
 
-/** Plain-text URLs and Word-pasted [label](url) become button links. The text part keeps the same URL. */
-export function textToHtml(text: string): string {
-  const tokenRe = /\[([^\]\n]{1,200})\]\((https?:\/\/[^\s)]+)\)|(?:https?:\/\/|www\.)[^\s<>"']+/gi;
+const EMOJI_ONLY = /^[\s\p{Extended_Pictographic}\p{Emoji_Presentation}\uFE0F\u200D]+$/u;
+const LEAD_EMOJI = /^(\p{Extended_Pictographic}\uFE0F?(?:\u200D\p{Extended_Pictographic}\uFE0F?)*)\s*/u;
+const LABELED_URL = /^(?:\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)|(.+?)\s*\((https?:\/\/[^)\s]+)\))\s*$/;
+const DASH_LINE = /^[—–-]/;
+
+function isEmojiOnly(line: string): boolean {
+  return EMOJI_ONLY.test(line.trim());
+}
+
+function labeledLink(line: string): { label: string; href: string } | null {
+  const match = line.trim().match(LABELED_URL);
+  if (!match) return null;
+  const href = match[2] || match[4];
+  const label = (match[1] || match[3] || "").trim();
+  if (!href) return null;
+  return { label, href };
+}
+
+/**
+ * Word splits one sentence into an emoji line, a "label (url)" line, and a "— note" line.
+ * Put them back on one line: emoji [label](url) — note.
+ */
+export function normalizeMailText(text: string): string {
+  const raw = decodeHtmlEntities(text).replace(/\r\n/g, "\n").split("\n");
+  const lines: string[] = [];
+  for (let i = 0; i < raw.length; i += 1) {
+    const cur = raw[i].trim();
+    if (!cur) {
+      lines.push("");
+      continue;
+    }
+    if (isEmojiOnly(cur)) {
+      const next = raw[i + 1]?.trim() ?? "";
+      const link = labeledLink(next);
+      if (link) {
+        const note = raw[i + 2]?.trim() ?? "";
+        const dash = DASH_LINE.test(note) ? ` ${note}` : "";
+        lines.push(`${cur} [${link.label}](${link.href})${dash}`);
+        i += dash ? 2 : 1;
+        continue;
+      }
+      if (next && !isEmojiOnly(next) && next.length <= 120 && !DASH_LINE.test(next)) {
+        lines.push(`${cur} ${next}`);
+        i += 1;
+        continue;
+      }
+    }
+    lines.push(cur);
+  }
+  return lines.join("\n");
+}
+
+function renderLine(line: string): string {
+  const trimmed = line.trim();
+  if (!trimmed) return `<div style="height:8px;line-height:8px;">&nbsp;</div>`;
+  const tokenRe = /\[([^\]\n]{1,200})\]\((https?:\/\/[^\s)]+)\)|([^\n[(]*?)\s*\((https?:\/\/[^)\s]+)\)|(?:https?:\/\/|www\.)[^\s<>"']+/gi;
   const parts: string[] = [];
   let last = 0;
-  for (const match of text.matchAll(tokenRe)) {
+  for (const match of trimmed.matchAll(tokenRe)) {
     const index = match.index ?? 0;
-    parts.push(escapeHtml(text.slice(last, index)).replace(/\n/g, "<br>\n"));
-    if (match[1] && match[2]) {
-      parts.push(linkButton(match[2], match[1]));
-    } else {
-      const raw = match[0];
-      const url = raw.replace(/[.,;:!?)]+$/, "");
-      const tail = raw.slice(url.length);
-      const href = /^www\./i.test(url) ? `https://${url}` : url;
-      parts.push(linkButton(href));
-      if (tail) parts.push(escapeHtml(tail));
+    if (index < last) continue;
+    parts.push(escapeHtml(trimmed.slice(last, index)));
+    const href = match[2] || match[4];
+    const rawLabel = match[1] || match[3];
+    if (href && rawLabel !== undefined) {
+      const lead = LEAD_EMOJI.exec(rawLabel);
+      if (lead && lead[0].length < rawLabel.length) {
+        parts.push(`${escapeHtml(lead[1])} ${inlineLink(href, rawLabel.slice(lead[0].length))}`);
+      } else {
+        parts.push(inlineLink(href, rawLabel));
+      }
+      last = index + match[0].length;
+      continue;
     }
-    last = index + match[0].length;
+    const raw = match[0];
+    const url = raw.replace(/[.,;:!?)]+$/, "");
+    const tail = raw.slice(url.length);
+    const bareHref = /^www\./i.test(url) ? `https://${url}` : url;
+    parts.push(inlineLink(bareHref));
+    if (tail) parts.push(escapeHtml(tail));
+    last = index + raw.length;
   }
-  parts.push(escapeHtml(text.slice(last)).replace(/\n/g, "<br>\n"));
-  return `<div style="font-family:sans-serif;font-size:15px;line-height:1.6;color:#111111;">${parts.join("")}</div>`;
+  parts.push(escapeHtml(trimmed.slice(last)));
+  return `<div style="margin:0 0 6px;">${parts.join("")}</div>`;
+}
+
+/** One line stays one line. Linked words become inline buttons; emoji stays beside them. */
+export function textToHtml(text: string): string {
+  const html = normalizeMailText(text).split("\n").map((line) => renderLine(line)).join("");
+  return `<div style="font-family:sans-serif;font-size:15px;line-height:1.7;color:#111111;">${html}</div>`;
+}
+
+/** Same wording as the HTML mail, without the raw addresses. */
+export function toPlainMail(text: string): string {
+  return normalizeMailText(text)
+    .replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, "$1")
+    .replace(/([^\n]*?)\s*\((https?:\/\/[^)\s]+)\)/g, "$1");
 }
 
 export function lintCopy(subject: string, body: string): Gate[] {
