@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "fs";
 import path from "path";
 import { seedState } from "./seed";
-import type { AppState, Activity } from "./types";
+import type { Activity, AppState, Contact } from "./types";
 import { nid, nowISO } from "./id";
 
 function dataFileLocked(): boolean {
@@ -42,6 +42,51 @@ export function dataFile(): string {
   return resolveDataPaths().file;
 }
 
+function contactLedgerFile(): string {
+  return path.join(resolveDataPaths().dir, "contacts.json");
+}
+
+function readContactLedger(): Contact[] {
+  const file = contactLedgerFile();
+  if (!existsSync(file)) return [];
+  try {
+    const parsed = JSON.parse(readFileSync(file, "utf8")) as { contacts?: Contact[] } | Contact[];
+    const rows = Array.isArray(parsed) ? parsed : parsed.contacts;
+    return Array.isArray(rows) ? rows.filter((row) => row && typeof row.email === "string" && row.email.includes("@")) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeContactLedger(contacts: Contact[]) {
+  const { dir } = resolveDataPaths();
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(contactLedgerFile(), JSON.stringify({ contacts }, null, 2), "utf8");
+}
+
+function contactKey(email: string): string {
+  return email.trim().toLowerCase();
+}
+
+/** Imported addresses live in contacts.json as well, so replacing mailpost.json does not drop the list. */
+function keepImportedContacts(state: AppState): boolean {
+  if (!Array.isArray(state.contacts)) state.contacts = [];
+  const saved = readContactLedger();
+  const seen = new Set(state.contacts.map((row) => contactKey(row.email)));
+  let restored = 0;
+  for (const row of saved) {
+    const key = contactKey(row.email);
+    if (seen.has(key)) continue;
+    state.contacts.push(row);
+    seen.add(key);
+    restored += 1;
+  }
+  const savedKeys = new Set(saved.map((row) => contactKey(row.email)));
+  const changed = restored > 0 || state.contacts.some((row) => !savedKeys.has(contactKey(row.email)));
+  if (changed) writeContactLedger(state.contacts);
+  return restored > 0;
+}
+
 export function loadState(): AppState {
   if (cache) return cache;
   if (dataFileLocked()) {
@@ -54,13 +99,18 @@ export function loadState(): AppState {
 
   if (!existsSync(file)) {
     cache = seedState();
-    if (process.env.NODE_ENV !== "production") {
+    if (keepImportedContacts(cache)) {
+      writeFileSync(file, JSON.stringify(cache, null, 2), "utf8");
+    } else if (process.env.NODE_ENV !== "production") {
       writeFileSync(file, JSON.stringify(cache, null, 2), "utf8");
     }
     return cache;
   }
 
   cache = JSON.parse(readFileSync(file, "utf8")) as AppState;
+  if (keepImportedContacts(cache)) {
+    writeFileSync(file, JSON.stringify(cache, null, 2), "utf8");
+  }
   return cache;
 }
 
@@ -74,6 +124,7 @@ export async function mutateState<T>(fn: (state: AppState) => T | Promise<T>): P
     const { dir, file } = resolveDataPaths();
     mkdirSync(dir, { recursive: true });
     writeFileSync(file, JSON.stringify(state, null, 2), "utf8");
+    if (Array.isArray(state.contacts)) writeContactLedger(state.contacts);
     cache = state;
     return result;
   };

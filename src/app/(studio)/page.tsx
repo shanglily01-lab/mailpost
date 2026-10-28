@@ -66,7 +66,7 @@ export default function ComposePage() {
 
   return (
     <>
-      <PageHead kicker="01 / 写信" title="用 Gmail 发一封" desc="选联系人或手填地址，可套用已保存的话术。正文里的网址会按超链接发出。要发给多人，到「群发」按每次 20 个排队。" />
+      <PageHead kicker="01 / 写信" title="用 Gmail 发一封" desc="选联系人或手填地址，可套用已保存的话术。正文里的网址会变成可点击的按钮。要发给多人，到「群发」按每次 20 个排队。" />
       {error ? <Banner kind="danger">{error}</Banner> : null}
       {notice ? <Banner kind="ok">{notice}</Banner> : null}
 

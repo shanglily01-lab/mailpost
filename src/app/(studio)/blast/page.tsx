@@ -132,7 +132,7 @@ export default function BlastPage() {
       <PageHead
         kicker="02 / 群发"
         title="按顺序一批批发"
-        desc="还没发过的人按名单顺序走，每批 20 个。这一批发完会自动接下一批。已经发过的不会再发。正文里的网址会按超链接发出。今天额度用完就停，第二天自动继续，约每 25 秒一封。"
+        desc="还没发过的人按名单顺序走，每批 20 个。这一批发完会自动接下一批。已经发过的不会再发。正文里的网址会变成可点击的按钮。今天额度用完就停，第二天自动继续，约每 25 秒一封。"
       />
       {error ? <Banner kind="danger">{error}</Banner> : null}
       {notice ? <Banner kind="ok">{notice}</Banner> : null}
@@ -173,7 +173,7 @@ export default function BlastPage() {
           <Field label="正文">
             <textarea className="field min-h-48" value={body} onChange={(e) => setBody(e.target.value)} required />
           </Field>
-          <p className="text-[12px] text-mist">可用变量：{"{{firstName}}"} {"{{company}}"} {"{{lastName}}"}。直接写 https:// 网址，发出去就是超链接。</p>
+          <p className="text-[12px] text-mist">可用变量：{"{{firstName}}"} {"{{company}}"} {"{{lastName}}"}。直接写 https:// 网址，发出去是一颗按钮。</p>
 
           <div className="flex flex-wrap items-center gap-2">
             <button className="btn btn-amber" disabled={busy || live.length === 0 || eligible.length === 0} type="submit">
