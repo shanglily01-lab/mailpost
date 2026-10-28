@@ -22,7 +22,9 @@ echo "==> git pull"
 git pull --ff-only
 
 echo "==> 安装依赖并构建"
-npm ci
+# 服务器上的 npm 10 会对这份锁文件报缺 @emnapi。npm install 能装上，装完把锁文件还原，避免下次 pull 被本地改动挡住。
+npm install --no-audit --no-fund
+git checkout -- package.json package-lock.json
 npm run build
 
 echo "==> 重启服务"
