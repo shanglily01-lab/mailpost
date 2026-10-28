@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from "fs";
 import path from "path";
 import nodemailer from "nodemailer";
 import type { AppState, Contact, Mailbox, SendJob, SequenceStep } from "./types";
-import { containsHyperlink, HYPERLINK_ERROR, renderTemplate, signatureFooter } from "./template";
+import { renderTemplate, signatureFooter, textToHtml } from "./template";
 import { nid, nowISO } from "./id";
 import { dataDir } from "./store";
 
@@ -156,9 +156,6 @@ export async function deliver(opts: {
   const unsub = kind === "bulk" ? publicUnsubUrl(opts.state, opts.contact) : "";
   const footer = signatureFooter(opts.state.settings, "");
   const body = footer ? `${opts.body}${opts.body.endsWith("\n") ? "" : "\n"}${footer}` : opts.body;
-  if (containsHyperlink(opts.subject) || containsHyperlink(body)) {
-    throw new Error(HYPERLINK_ERROR);
-  }
   const headers: Record<string, string> = {};
   if (unsub) headers["List-Unsubscribe"] = `<${unsub}>`;
 
@@ -189,6 +186,7 @@ export async function deliver(opts: {
         to: opts.contact.email,
         subject: opts.subject,
         text: body,
+        html: textToHtml(body),
         headers,
       });
     } finally {

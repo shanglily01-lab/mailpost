@@ -23,19 +23,20 @@ export function renderTemplate(
   return text.replace(VAR, (_, key: string) => map[key] ?? "");
 }
 
-export function containsHyperlink(text: string): boolean {
-  const stripped = text.replace(/\{\{\s*unsubUrl\s*\}\}/g, "");
-  return (
-    /https?:\/\//i.test(stripped) ||
-    /www\./i.test(stripped) ||
-    /mailto:/i.test(stripped) ||
-    /<a\b/i.test(stripped) ||
-    /\bhref\s*=/i.test(stripped) ||
-    /\[[^\]]*\]\([^)]+\)/.test(stripped)
-  );
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-export const HYPERLINK_ERROR = "邮件里不能放超链接。请删掉网址后再发。";
+/** Plain-text URLs become real links in the HTML part. The text part keeps the same URL. */
+export function textToHtml(text: string): string {
+  const linked = escapeHtml(text).replace(/(?:https?:\/\/|www\.)[^\s<>"']+/gi, (raw) => {
+    const url = raw.replace(/[.,;:!?)]+$/, "");
+    const tail = raw.slice(url.length);
+    const href = /^www\./i.test(url) ? `https://${url}` : url;
+    return `<a href="${href}">${url}</a>${tail}`;
+  });
+  return `<div>${linked.replace(/\n/g, "<br>\n")}</div>`;
+}
 
 export function lintCopy(subject: string, body: string): Gate[] {
   const gates: Gate[] = [];
@@ -58,14 +59,6 @@ export function lintCopy(subject: string, body: string): Gate[] {
       code: "TEMPLATE_SPAMMY",
       severity: "block",
       message: "检测到促销/诱导用语。冷邮件只允许纯文本、针对痛点提问，不要促销口吻。",
-    });
-  }
-
-  if (containsHyperlink(blob)) {
-    gates.push({
-      code: "TEMPLATE_PROMO",
-      severity: "block",
-      message: HYPERLINK_ERROR,
     });
   }
 

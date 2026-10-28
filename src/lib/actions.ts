@@ -9,7 +9,6 @@ import {
   resetSentToday,
 } from "./safety";
 import { buildMessage, canLiveSend, deliver, explainSmtpError, newJob, verifySmtp } from "./send";
-import { containsHyperlink, HYPERLINK_ERROR } from "./template";
 import { pushLog } from "./store";
 import { renderTemplate } from "./template";
 import type {
@@ -354,9 +353,6 @@ export function saveSequence(
   if (input.steps.some((s) => !s.subject.trim() || !s.body.trim())) {
     return { ok: false, error: "每封话术都要有标题和正文。" };
   }
-  if (input.steps.some((s) => containsHyperlink(s.subject) || containsHyperlink(s.body))) {
-    return { ok: false, error: HYPERLINK_ERROR };
-  }
   const existing = input.id ? state.sequences.find((s) => s.id === input.id) : undefined;
   if (existing) {
     existing.name = input.name.trim() || existing.name;
@@ -648,14 +644,6 @@ export async function startBulk(
   const subject = input.subject.trim();
   const body = input.body.trim();
   if (!subject || !body) return { ok: false, error: "标题和正文都要填。" };
-  if (
-    containsHyperlink(subject) ||
-    containsHyperlink(body) ||
-    containsHyperlink(state.settings.companyName) ||
-    containsHyperlink(state.settings.physicalAddress)
-  ) {
-    return { ok: false, error: HYPERLINK_ERROR };
-  }
 
   const mailbox0 = state.mailboxes.find((m) => m.id === input.mailboxId);
   if (!mailbox0) return { ok: false, error: "请选择发件邮箱。" };
@@ -804,12 +792,6 @@ export async function processQueue(state: AppState, limit = 8): Promise<ActionRe
       }
       const subjectRendered = renderTemplate(campaign.subject || job.subject, contact);
       const fullBody = renderTemplate(campaign.body || "", contact);
-      if (containsHyperlink(subjectRendered) || containsHyperlink(fullBody)) {
-        job.status = "blocked";
-        job.blockReason = HYPERLINK_ERROR;
-        blocked += 1;
-        continue;
-      }
       try {
         await deliver({
           state,
@@ -856,12 +838,6 @@ export async function processQueue(state: AppState, limit = 8): Promise<ActionRe
     }
 
     const msg = buildMessage(state, contact, step);
-    if (containsHyperlink(msg.subject) || containsHyperlink(msg.body)) {
-      job.status = "blocked";
-      job.blockReason = HYPERLINK_ERROR;
-      blocked += 1;
-      continue;
-    }
     try {
       await deliver({ state, mailbox: mailbox0, contact, subject: msg.subject, body: msg.body });
     } catch (err) {
@@ -958,14 +934,6 @@ export async function sendOnce(
   const subject = input.subject.trim();
   const body = input.body.trim();
   if (!to || !subject || !body) return { ok: false, error: "收件人、标题、正文都要填。" };
-  if (
-    containsHyperlink(subject) ||
-    containsHyperlink(body) ||
-    containsHyperlink(state.settings.companyName) ||
-    containsHyperlink(state.settings.physicalAddress)
-  ) {
-    return { ok: false, error: HYPERLINK_ERROR };
-  }
 
   const mailbox0 = state.mailboxes.find((m) => m.id === input.mailboxId);
   if (!mailbox0) return { ok: false, error: "请选择发件邮箱。" };
