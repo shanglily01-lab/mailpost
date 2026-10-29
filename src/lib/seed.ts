@@ -35,6 +35,7 @@ export function seedState(): AppState {
     mailboxes: [],
     contacts: [],
     sequences: [],
+    templates: [],
     campaigns: [],
     jobs: [],
     activity: [],

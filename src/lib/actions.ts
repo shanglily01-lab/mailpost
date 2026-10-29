@@ -22,6 +22,7 @@ import type {
   IcpFit,
   Mailbox,
   Region,
+  MailTemplate,
   Sequence,
 } from "./types";
 import { parseContactFile } from "./contact-import";
@@ -380,6 +381,39 @@ export function deleteSequence(state: AppState, id: string): ActionResult {
   return { ok: true, message: "已删除。" };
 }
 
+export function saveTemplate(
+  state: AppState,
+  input: { id?: string; name: string; subject: string; body: string },
+): ActionResult {
+  if (!Array.isArray(state.templates)) state.templates = [];
+  const subject = input.subject.trim();
+  const body = input.body.trim();
+  if (!subject || !body) return { ok: false, error: "标题和正文都要填。" };
+  const existing = input.id ? state.templates.find((t) => t.id === input.id) : undefined;
+  if (existing) {
+    existing.name = input.name.trim() || existing.name;
+    existing.subject = subject;
+    existing.body = body;
+    existing.updatedAt = nowISO();
+    pushLog(state, "ok", "模板已保存", existing.name);
+    return { ok: true, message: "模板已更新。", data: { id: existing.id } };
+  }
+  const id = nid();
+  const name = input.name.trim() || subject.slice(0, 24) || "未命名模板";
+  const row: MailTemplate = { id, name, subject, body, updatedAt: nowISO() };
+  state.templates.push(row);
+  pushLog(state, "ok", "模板已保存", name);
+  return { ok: true, message: "模板已保存。", data: { id } };
+}
+
+export function deleteTemplate(state: AppState, id: string): ActionResult {
+  if (!Array.isArray(state.templates)) state.templates = [];
+  const n = state.templates.length;
+  state.templates = state.templates.filter((t) => t.id !== id);
+  if (state.templates.length === n) return { ok: false, error: "模板不存在。" };
+  return { ok: true, message: "模板已删除。" };
+}
+
 export function createCampaign(
   state: AppState,
   input: { name: string; sequenceId: string; mailboxIds: string[]; contactIds: string[] },
@@ -575,13 +609,36 @@ function emailsWithStatus(state: AppState, statuses: Set<string>): Set<string> {
   return emails;
 }
 
+function releaseUnsentFromOtherBlasts(state: AppState, contactIds: string[]) {
+  const wanted = new Set(contactIds);
+  for (const campaign of state.campaigns) {
+    if (campaign.status !== "running" && campaign.status !== "paused") continue;
+    if (!isBulkCampaign(campaign)) continue;
+    campaign.contactIds = campaign.contactIds.filter((id) => {
+      if (!wanted.has(id)) return true;
+      return state.jobs.some(
+        (job) =>
+          job.campaignId === campaign.id &&
+          job.contactId === id &&
+          (job.status === "queued" || job.status === "sent" || job.status === "bounced" || job.status === "replied"),
+      );
+    });
+    const related = state.jobs.filter((job) => job.campaignId === campaign.id);
+    const stillQueued = related.some((job) => job.status === "queued");
+    if (related.length && !stillQueued) campaign.status = "completed";
+  }
+}
+
 function enqueueBulkWave(state: AppState, campaign: Campaign): number {
   if (campaign.status !== "running" || !isBulkCampaign(campaign)) return 0;
   if (state.jobs.some((j) => j.campaignId === campaign.id && j.status === "queued")) return 0;
   const delivered = emailsWithStatus(state, new Set(["sent", "bounced", "replied"]));
   const seen = new Set(state.jobs.filter((j) => j.campaignId === campaign.id).map((j) => j.contactId));
-  const mailboxId = campaign.mailboxIds[0];
-  if (!mailboxId) return 0;
+  const mailboxIds = campaign.mailboxIds.filter((id) => state.mailboxes.some((m) => m.id === id));
+  if (!mailboxIds.length) return 0;
+  const alreadyQueued = state.jobs.filter(
+    (job) => job.campaignId === campaign.id && (job.status === "queued" || job.status === "sent"),
+  ).length;
   let added = 0;
   for (const id of campaign.contactIds) {
     if (seen.has(id)) continue;
@@ -599,7 +656,7 @@ function enqueueBulkWave(state: AppState, campaign: Campaign): number {
         newJob({
           campaignId: campaign.id,
           contactId: id,
-          mailboxId,
+          mailboxId: mailboxIds[0],
           stepIndex: 0,
           scheduledAt: nowISO(),
           sentAt: null,
@@ -619,7 +676,7 @@ function enqueueBulkWave(state: AppState, campaign: Campaign): number {
       newJob({
         campaignId: campaign.id,
         contactId: contact.id,
-        mailboxId,
+        mailboxId: mailboxIds[(alreadyQueued + added) % mailboxIds.length],
         stepIndex: 0,
         scheduledAt: nowISO(),
         sentAt: null,
@@ -637,30 +694,14 @@ function enqueueBulkWave(state: AppState, campaign: Campaign): number {
   return added;
 }
 
-export async function startBulk(
-  state: AppState,
-  input: { mailboxId: string; contactIds: string[]; subject: string; body: string; name?: string },
-): Promise<ActionResult> {
-  const subject = input.subject.trim();
-  const body = input.body.trim();
-  if (!subject || !body) return { ok: false, error: "标题和正文都要填。" };
-
-  const mailbox0 = state.mailboxes.find((m) => m.id === input.mailboxId);
-  if (!mailbox0) return { ok: false, error: "请选择发件邮箱。" };
-  if (!canLiveSend(mailbox0)) return { ok: false, error: "这个邮箱还没配好真实 SMTP（主机 + 授权码）。" };
-
-  const now = new Date();
-  const mailbox = resetSentToday(mailbox0, now);
-  Object.assign(mailbox0, mailbox);
-  const cap = mailboxEffectiveCap(mailbox0, now);
-  const left = Math.max(0, cap - mailbox0.sentToday);
-
+function collectSendable(state: AppState, contactIds: string[], limit = Number.POSITIVE_INFINITY): { sendable: Contact[]; skipped: string[] } {
   const seen = new Set<string>();
   const sendable: Contact[] = [];
   const skipped: string[] = [];
   const delivered = emailsWithStatus(state, new Set(["sent", "bounced", "replied"]));
   const queued = emailsWithStatus(state, new Set(["queued"]));
-  for (const id of input.contactIds) {
+  for (const id of contactIds) {
+    if (sendable.length >= limit) break;
     if (seen.has(id)) continue;
     seen.add(id);
     const contact = state.contacts.find((c) => c.id === id);
@@ -687,10 +728,36 @@ export async function startBulk(
     }
     sendable.push(contact);
   }
+  return { sendable, skipped };
+}
+
+export async function startBulk(
+  state: AppState,
+  input: { mailboxId: string; contactIds: string[]; subject: string; body: string; name?: string },
+): Promise<ActionResult> {
+  const subject = input.subject.trim();
+  const body = input.body.trim();
+  if (!subject || !body) return { ok: false, error: "标题和正文都要填。" };
+
+  const mailbox0 = state.mailboxes.find((m) => m.id === input.mailboxId);
+  if (!mailbox0) return { ok: false, error: "请选择发件邮箱。" };
+  if (!canLiveSend(mailbox0)) return { ok: false, error: "这个邮箱还没配好真实 SMTP（主机 + 授权码）。" };
+
+  const now = new Date();
+  const mailbox = resetSentToday(mailbox0, now);
+  Object.assign(mailbox0, mailbox);
+  const cap = mailboxEffectiveCap(mailbox0, now);
+  const left = Math.max(0, cap - mailbox0.sentToday);
+
+  const picked = collectSendable(state, input.contactIds, BULK_BATCH_SIZE);
+  const sendable = picked.sendable;
+  const skipped = picked.skipped;
 
   if (!sendable.length) {
     return { ok: false, error: skipped[0] || "没有可发的联系人。已经发过、退订和购买名单会被跳过。" };
   }
+
+  releaseUnsentFromOtherBlasts(state, sendable.map((c) => c.id));
 
   const campaign: Campaign = {
     id: nid(),
@@ -719,12 +786,81 @@ export async function startBulk(
 
   const tick = await processQueue(state, 1);
   const remain = state.jobs.filter((j) => j.campaignId === campaign.id && j.status === "queued").length;
-  const laterPeople = Math.max(0, sendable.length - queuedNow);
-  const laterNote = laterPeople ? `后面还有 ${laterPeople} 人，这一批发完会自动接着发。` : "";
   return {
     ok: true,
-    message: `已开始，共 ${sendable.length} 人，本批 ${queuedNow} 个。${skipNote}${laterNote}约每 25 秒一封，今天额度用完就停，第二天自动继续。${tick.message ?? ""}剩余排队 ${remain}。`,
-    data: { id: campaign.id, queued: sendable.length, skipped: skipped.length, todayLeft: left },
+    message: `已开始，本批 ${queuedNow} 个。${skipNote}约每 25 秒一封，今天额度用完就停，第二天接着发完这一批。${tick.message ?? ""}剩余排队 ${remain}。`,
+    data: { id: campaign.id, queued: queuedNow, skipped: skipped.length, todayLeft: left },
+  };
+}
+
+export async function startAuto(
+  state: AppState,
+  input: { templateId: string; mailboxIds?: string[]; contactIds?: string[] },
+): Promise<ActionResult> {
+  if (!Array.isArray(state.templates)) state.templates = [];
+  const template = state.templates.find((item) => item.id === input.templateId);
+  if (!template) return { ok: false, error: "请选择邮件模板。" };
+  const subject = template.subject.trim();
+  const body = template.body.trim();
+  if (!subject || !body) return { ok: false, error: "这个模板还没有标题或正文。" };
+
+  const live = state.mailboxes.filter((mailbox) => canLiveSend(mailbox));
+  const wanted = input.mailboxIds?.length ? input.mailboxIds : live.map((mailbox) => mailbox.id);
+  const mailboxIds = wanted.filter((id) => live.some((mailbox) => mailbox.id === id));
+  if (!mailboxIds.length) return { ok: false, error: "没有配好的发件邮箱。" };
+
+  const now = new Date();
+  let left = 0;
+  for (const id of mailboxIds) {
+    const box = state.mailboxes.find((mailbox) => mailbox.id === id);
+    if (!box) continue;
+    const reset = resetSentToday(box, now);
+    Object.assign(box, reset);
+    left += Math.max(0, mailboxEffectiveCap(box, now) - box.sentToday);
+  }
+
+  const requested = input.contactIds?.length ? input.contactIds : state.contacts.map((contact) => contact.id);
+  const picked = collectSendable(state, requested);
+  const sendable = picked.sendable;
+  const skipped = picked.skipped;
+  if (!sendable.length) {
+    return { ok: false, error: skipped[0] || "没有可发的联系人。已经发过、退订和购买名单会被跳过。" };
+  }
+
+  releaseUnsentFromOtherBlasts(state, sendable.map((contact) => contact.id));
+
+  const campaign: Campaign = {
+    id: nid(),
+    name: template.name,
+    sequenceId: "",
+    mailboxIds,
+    contactIds: sendable.map((contact) => contact.id),
+    status: "running",
+    killReason: "",
+    createdAt: nowISO(),
+    launchedAt: nowISO(),
+    kind: "bulk",
+    subject,
+    body,
+    autoContinue: true,
+  };
+  state.campaigns.push(campaign);
+  const queuedNow = enqueueBulkWave(state, campaign);
+  const skipNote = skipped.length ? `跳过 ${skipped.length} 人。` : "";
+  pushLog(
+    state,
+    "ok",
+    "自动发已排队",
+    `${campaign.name} · 共 ${sendable.length} 人 · 本批 ${queuedNow} · ${mailboxIds.length} 个发件邮箱轮流发。${skipNote}`,
+  );
+
+  const tick = await processQueue(state, 1);
+  const remain = state.jobs.filter((job) => job.campaignId === campaign.id && job.status === "queued").length;
+  const later = Math.max(0, sendable.length - queuedNow);
+  return {
+    ok: true,
+    message: `已开始自动发，共 ${sendable.length} 人，每人一封。本批 ${queuedNow} 个，后面还有 ${later} 个会自动继续。${mailboxIds.length} 个发件邮箱轮流发。${skipNote}${tick.message ?? ""}剩余排队 ${remain}。今日额度合计还剩 ${left} 封。`,
+    data: { id: campaign.id, queued: queuedNow, total: sendable.length, skipped: skipped.length, todayLeft: left },
   };
 }
 
@@ -857,10 +993,15 @@ export async function processQueue(state: AppState, limit = 8): Promise<ActionRe
   }
 
   for (const c of state.campaigns.filter((x) => x.status === "running" || x.status === "paused")) {
-    if (c.status === "running") enqueueBulkWave(state, c);
+    if (c.status === "running" && c.autoContinue) enqueueBulkWave(state, c);
     const related = state.jobs.filter((j) => j.campaignId === c.id);
     const queued = related.some((j) => j.status === "queued");
-    const untouched = isBulkCampaign(c) && c.contactIds.some((id) => !related.some((j) => j.contactId === id));
+    if (!queued && isBulkCampaign(c) && !c.autoContinue) {
+      const touched = new Set(related.map((j) => j.contactId));
+      c.contactIds = c.contactIds.filter((id) => touched.has(id));
+    }
+    const untouched = Boolean(c.autoContinue) && c.contactIds.some((id) => !related.some((j) => j.contactId === id));
+    if (c.status === "paused" && (queued || untouched)) continue;
     if (related.length && !queued && !untouched) c.status = "completed";
   }
 

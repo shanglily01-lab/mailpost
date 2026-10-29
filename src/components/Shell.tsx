@@ -7,11 +7,12 @@ import { useState } from "react";
 const NAV = [
   { href: "/", label: "写信", kicker: "01" },
   { href: "/blast", label: "群发", kicker: "02" },
-  { href: "/mailboxes", label: "Gmail", kicker: "03" },
-  { href: "/contacts", label: "联系人", kicker: "04" },
-  { href: "/sequences", label: "话术", kicker: "05" },
-  { href: "/activity", label: "已发送", kicker: "06" },
-  { href: "/compliance", label: "设置", kicker: "07" },
+  { href: "/templates", label: "模板", kicker: "03" },
+  { href: "/mailboxes", label: "Gmail", kicker: "04" },
+  { href: "/contacts", label: "联系人", kicker: "05" },
+  { href: "/sequences", label: "话术", kicker: "06" },
+  { href: "/activity", label: "已发送", kicker: "07" },
+  { href: "/compliance", label: "设置", kicker: "08" },
 ];
 
 export function Shell({ children }: { children: React.ReactNode }) {

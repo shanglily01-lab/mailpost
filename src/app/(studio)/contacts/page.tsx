@@ -70,7 +70,7 @@ export default function ContactsPage() {
   return (
     <>
       <PageHead
-        kicker="04 / 联系人"
+        kicker="05 / 联系人"
         title="你自己加的名单"
         desc="可以单个添加，也可以一次导入 CSV 或 TXT。导入的名单另存在数据目录，更新代码不会清掉。写信可以单选，群发可以勾一批人。"
       />

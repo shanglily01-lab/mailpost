@@ -87,8 +87,15 @@ function keepImportedContacts(state: AppState): boolean {
   return restored > 0;
 }
 
+function normalizeState(state: AppState) {
+  if (!Array.isArray(state.templates)) state.templates = [];
+}
+
 export function loadState(): AppState {
-  if (cache) return cache;
+  if (cache) {
+    normalizeState(cache);
+    return cache;
+  }
   if (dataFileLocked()) {
     cache = seedState();
     return cache;
@@ -108,6 +115,7 @@ export function loadState(): AppState {
   }
 
   cache = JSON.parse(readFileSync(file, "utf8")) as AppState;
+  normalizeState(cache);
   if (keepImportedContacts(cache)) {
     writeFileSync(file, JSON.stringify(cache, null, 2), "utf8");
   }

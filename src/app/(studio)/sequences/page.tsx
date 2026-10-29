@@ -51,7 +51,7 @@ export default function SequencesPage() {
   return (
     <>
       <PageHead
-        kicker="05 / 话术"
+        kicker="06 / 话术"
         title="自己写，随时改"
         desc="标题和正文都是你的。可用 {{firstName}} {{company}}。网址和从 Word 粘贴的超链接都会变成可点击的按钮。写信时会按联系人替换。保存后立刻生效。"
         actions={

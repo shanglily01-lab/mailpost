@@ -111,6 +111,14 @@ export type Sequence = {
   updatedAt: string;
 };
 
+export type MailTemplate = {
+  id: string;
+  name: string;
+  subject: string;
+  body: string;
+  updatedAt: string;
+};
+
 export type CampaignKind = "bulk" | "sequence";
 
 export type Campaign = {
@@ -126,6 +134,7 @@ export type Campaign = {
   kind?: CampaignKind;
   subject?: string;
   body?: string;
+  autoContinue?: boolean;
 };
 
 export type SendJob = {
@@ -170,6 +179,7 @@ export type AppState = {
   mailboxes: Mailbox[];
   contacts: Contact[];
   sequences: Sequence[];
+  templates: MailTemplate[];
   campaigns: Campaign[];
   jobs: SendJob[];
   activity: Activity[];

@@ -30,7 +30,7 @@ export default function CompliancePage() {
 
   return (
     <>
-      <PageHead kicker="07 / 设置" title="签名和退订" desc="显示名会作为私人信签名。正文里的网址会变成可点击的按钮。退订地址只放在邮件头里，不会写进正文。" />
+      <PageHead kicker="08 / 设置" title="签名和退订" desc="显示名会作为私人信签名。正文里的网址会变成可点击的按钮。退订地址只放在邮件头里，不会写进正文。" />
       {error ? <Banner kind="danger">{error}</Banner> : null}
       {notice ? <Banner kind="ok">{notice}</Banner> : null}
 

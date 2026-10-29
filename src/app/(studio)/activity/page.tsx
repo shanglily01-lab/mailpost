@@ -38,7 +38,7 @@ export default function ActivityPage() {
 
   return (
     <>
-      <PageHead kicker="06 / 已发送" title="发送记录" desc="单封和群发队列都在这里。排队中的会按日限额陆续变成已发送。" />
+      <PageHead kicker="07 / 已发送" title="发送记录" desc="单封和群发队列都在这里。排队中的会按日限额陆续变成已发送。" />
       {error ? <Banner kind="danger">{error}</Banner> : null}
       {notice ? <Banner kind="ok">{notice}</Banner> : null}
 

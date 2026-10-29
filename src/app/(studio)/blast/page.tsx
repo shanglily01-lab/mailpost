@@ -1,10 +1,12 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { MailBodyField } from "@/components/MailBodyField";
 import { useMailpost } from "@/lib/client";
 import { Banner, Field, PageHead, Stamp } from "@/components/ui";
 import { BULK_BATCH_SIZE } from "@/lib/constants";
+import type { Contact } from "@/lib/types";
 const statusTone = {
   draft: "mist",
   running: "amber",
@@ -36,7 +38,8 @@ export default function BlastPage() {
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
   const [name, setName] = useState("");
-  const [seeded, setSeeded] = useState(false);
+  const [autoOpen, setAutoOpen] = useState(false);
+  const [templateId, setTemplateId] = useState("");
 
   useEffect(() => {
     if (live.some((m) => m.id === mailboxId)) return;
@@ -70,16 +73,27 @@ export default function BlastPage() {
       const email = (job.toEmail || byId.get(job.contactId) || "").toLowerCase();
       if (email) emails.add(email);
     }
-    for (const campaign of state?.campaigns ?? []) {
-      if (campaign.status !== "running" && campaign.status !== "paused") continue;
-      if (campaign.kind !== "bulk" && !(campaign.subject && !campaign.sequenceId)) continue;
-      for (const id of campaign.contactIds) {
-        const email = byId.get(id);
-        if (email) emails.add(email);
-      }
-    }
     return emails;
   }, [state]);
+  const autoWaiting = useMemo(() => {
+    const contacts = state?.contacts ?? [];
+    const waiting: Contact[] = [];
+    const seen = new Set<string>();
+    for (const campaign of state?.campaigns ?? []) {
+      if (!campaign.autoContinue) continue;
+      if (campaign.status !== "running" && campaign.status !== "paused") continue;
+      const touched = new Set((state?.jobs ?? []).filter((job) => job.campaignId === campaign.id).map((job) => job.contactId));
+      for (const id of campaign.contactIds) {
+        if (touched.has(id) || seen.has(id)) continue;
+        const contact = contacts.find((item) => item.id === id);
+        if (!contact || sentEmails.has(contact.email.toLowerCase())) continue;
+        seen.add(id);
+        waiting.push(contact);
+      }
+    }
+    return waiting;
+  }, [state, sentEmails]);
+  const waitingEmails = useMemo(() => new Set(autoWaiting.map((c) => c.email.toLowerCase())), [autoWaiting]);
   const eligible = useMemo(
     () =>
       (state?.contacts ?? []).filter(
@@ -88,17 +102,28 @@ export default function BlastPage() {
           !c.suppressed &&
           c.source !== "purchased" &&
           !sentEmails.has(c.email.toLowerCase()) &&
-          !queuedEmails.has(c.email.toLowerCase()),
+          !queuedEmails.has(c.email.toLowerCase()) &&
+          !waitingEmails.has(c.email.toLowerCase()),
       ),
-    [state, sentEmails, queuedEmails],
+    [state, sentEmails, queuedEmails, waitingEmails],
   );
   const ids = eligible.filter((c) => selected[c.id]).map((c) => c.id);
+  const eligibleKey = eligible.map((c) => c.id).join(",");
 
   useEffect(() => {
-    if (seeded || eligible.length === 0) return;
-    setSeeded(true);
-    setSelected(pickIds(eligible.map((c) => c.id)));
-  }, [seeded, eligible]);
+    if (!eligibleKey) return;
+    const nextIds = eligibleKey.split(",");
+    setSelected((prev) => {
+      if (nextIds.some((id) => prev[id])) return prev;
+      return pickIds(nextIds);
+    });
+  }, [eligibleKey]);
+
+  const templates = state?.templates ?? [];
+  useEffect(() => {
+    if (templates.some((item) => item.id === templateId)) return;
+    setTemplateId(templates[0]?.id ?? "");
+  }, [templates, templateId]);
 
   if (!state) return <div className="p-10 text-mist">{error || "加载中…"}</div>;
 
@@ -113,6 +138,14 @@ export default function BlastPage() {
 
   function applyScript(id: string) {
     setScriptId(id);
+    if (id.startsWith("template:")) {
+      const template = (state!.templates ?? []).find((item) => item.id === id.slice(9));
+      if (!template) return;
+      setSubject(template.subject);
+      setBody(template.body);
+      if (!name) setName(template.name);
+      return;
+    }
     const s = state!.sequences.find((x) => x.id === id);
     if (!s?.steps[0]) return;
     setSubject(s.steps[0].subject);
@@ -120,9 +153,24 @@ export default function BlastPage() {
     if (!name) setName(s.name);
   }
 
+  async function onAuto() {
+    if (!templateId) {
+      setError("请先选择邮件模板。");
+      return;
+    }
+    const r = await mutate("startAuto", {
+      templateId,
+      contactIds: eligible.map((c) => c.id),
+      mailboxIds: live.map((m) => m.id),
+    });
+    if (r.ok) setAutoOpen(false);
+  }
+
   async function onStart(e: FormEvent) {
     e.preventDefault();
-    const r = await mutate("startBulk", { mailboxId, contactIds: eligible.map((c) => c.id), subject, body, name });
+    const chosen = ids.length ? ids : eligible.slice(0, BULK_BATCH_SIZE).map((c) => c.id);
+    if (!chosen.length) return;
+    const r = await mutate("startBulk", { mailboxId, contactIds: chosen, subject, body, name });
     if (r.ok) setSelected({});
   }
 
@@ -133,7 +181,7 @@ export default function BlastPage() {
       <PageHead
         kicker="02 / 群发"
         title="按顺序一批批发"
-        desc="还没发过的人按名单顺序走，每批 20 个。这一批发完会自动接下一批。已经发过的不会再发。正文里的网址会变成可点击的按钮。今天额度用完就停，第二天自动继续，约每 25 秒一封。"
+        desc="手动群发每批最多 20 个，发完剩下的还在右边。点「自动发」选一个模板，还没发过的邮箱每人一封，全部发件 Gmail 轮流发。已经发过的不会再发。"
       />
       {error ? <Banner kind="danger">{error}</Banner> : null}
       {notice ? <Banner kind="ok">{notice}</Banner> : null}
@@ -153,12 +201,17 @@ export default function BlastPage() {
             </select>
           </Field>
 
-          <Field label="套用话术">
+          <Field label="套用模板或话术">
             <select className="field" value={scriptId} onChange={(e) => applyScript(e.target.value)}>
               <option value="">不套用，自己写</option>
+              {templates.map((item) => (
+                <option key={item.id} value={`template:${item.id}`}>
+                  模板 · {item.name}
+                </option>
+              ))}
               {state.sequences.map((s) => (
                 <option key={s.id} value={s.id}>
-                  {s.name}
+                  话术 · {s.name}
                 </option>
               ))}
             </select>
@@ -178,12 +231,51 @@ export default function BlastPage() {
 
           <div className="flex flex-wrap items-center gap-2">
             <button className="btn btn-amber" disabled={busy || live.length === 0 || eligible.length === 0} type="submit">
-              {busy ? "排队中…" : `开始群发（${eligible.length} 人，每批 ${BULK_BATCH_SIZE}）`}
+              {busy ? "排队中…" : `开始群发（${ids.length || Math.min(BULK_BATCH_SIZE, eligible.length)} 人）`}
+            </button>
+            <button
+              className="btn"
+              disabled={busy || live.length === 0 || eligible.length === 0}
+              type="button"
+              onClick={() => setAutoOpen((open) => !open)}
+            >
+              自动发
             </button>
             <span className="num text-sm text-mist">
               {box ? `本批最多 ${todaySend} · 之后还有 ${later} · 今日额度 ${left}/${box.effectiveCap}` : ""}
             </span>
           </div>
+          {autoOpen ? (
+            <div className="panel space-y-3 p-4">
+              <div className="font-serif text-xl">自动发</div>
+              <p className="text-sm leading-6 text-mist">
+                还没发过的 {eligible.length} 个邮箱，每人一封。{live.length} 个发件 Gmail 轮流发，每批 {BULK_BATCH_SIZE} 封，发完自动继续。
+              </p>
+              {templates.length === 0 ? (
+                <p className="text-sm text-amber">
+                  还没有模板。先到<Link href="/templates" className="underline">模板</Link>页写一封。
+                </p>
+              ) : (
+                <Field label="邮件模板">
+                  <select className="field" value={templateId} onChange={(e) => setTemplateId(e.target.value)}>
+                    {templates.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.name} · {item.subject}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              )}
+              <div className="flex gap-2">
+                <button className="btn btn-amber" disabled={busy || templates.length === 0} type="button" onClick={onAuto}>
+                  {busy ? "排队中…" : `确认自动发（${eligible.length} 人）`}
+                </button>
+                <button className="btn" type="button" onClick={() => setAutoOpen(false)}>
+                  取消
+                </button>
+              </div>
+            </div>
+          ) : null}
         </form>
 
         <div className="panel p-4">
@@ -199,10 +291,11 @@ export default function BlastPage() {
             </div>
           </div>
           <p className="mt-1 text-[12px] text-mist">
-            已发过 {sentEmails.size} 个。点开始后整份未发送名单都会排队，每批 {BULK_BATCH_SIZE} 个，发完自动继续。
+            还可选 {eligible.length} 个，已发过 {sentEmails.size} 个
+            {autoWaiting.length ? `，自动待发 ${autoWaiting.length} 个` : ""}。每批最多 {BULK_BATCH_SIZE} 个。
           </p>
           <ul className="mt-3 max-h-[28rem] space-y-1 overflow-auto">
-            {eligible.length === 0 ? <li className="text-sm text-mist">没有可发的联系人。</li> : null}
+            {eligible.length === 0 && autoWaiting.length === 0 ? <li className="text-sm text-mist">没有可发的联系人。</li> : null}
             {eligible.map((c) => (
               <li key={c.id}>
                 <label className="flex cursor-pointer items-start gap-2 px-1 py-1.5 hover:bg-ink-3">
@@ -222,6 +315,12 @@ export default function BlastPage() {
                     <span className="num block text-[12px] text-mist">{c.email}</span>
                   </span>
                 </label>
+              </li>
+            ))}
+            {autoWaiting.map((c) => (
+              <li key={c.id} className="px-1 py-1.5">
+                <span className="block text-paper">{c.firstName || c.email}</span>
+                <span className="num block text-[12px] text-mist">{c.email} · 自动待发</span>
               </li>
             ))}
           </ul>
@@ -247,6 +346,7 @@ export default function BlastPage() {
                     </div>
                     <p className="mt-2 num text-[12px] text-mist">
                       已发 {sent} · 排队 {queued} · 失败/跳过 {failed} · 共 {jobs.length}
+                      {c.autoContinue ? ` · 还没轮到 ${c.contactIds.filter((id) => !jobs.some((j) => j.contactId === id)).length}` : ""}
                     </p>
                     {c.killReason ? <p className="mt-1 text-sm text-rust">{c.killReason}</p> : null}
                   </div>

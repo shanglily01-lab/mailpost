@@ -38,6 +38,14 @@ export default function ComposePage() {
 
   function applyScript(id: string) {
     setScriptId(id);
+    if (id.startsWith("template:")) {
+      const template = (data.templates ?? []).find((item) => item.id === id.slice(9));
+      if (!template) return;
+      setSubject(template.subject);
+      setBody(template.body);
+      setScriptName(template.name);
+      return;
+    }
     const s = data.sequences.find((x) => x.id === id);
     if (!s?.steps[0]) return;
     setSubject(s.steps[0].subject);
@@ -57,7 +65,7 @@ export default function ComposePage() {
 
   async function saveScript() {
     const r = await mutate("saveSequence", {
-      id: scriptId || undefined,
+      id: scriptId.startsWith("template:") ? undefined : scriptId || undefined,
       name: scriptName.trim() || subject.slice(0, 24) || "未命名话术",
       steps: [{ delayDays: 0, subject, body }],
     });
@@ -104,12 +112,17 @@ export default function ComposePage() {
           </Field>
         </div>
 
-        <Field label="套用话术">
+        <Field label="套用模板或话术">
           <select className="field" value={scriptId} onChange={(e) => applyScript(e.target.value)}>
             <option value="">不套用，自己写</option>
+            {(data.templates ?? []).map((item) => (
+              <option key={item.id} value={`template:${item.id}`}>
+                模板 · {item.name}
+              </option>
+            ))}
             {data.sequences.map((s) => (
               <option key={s.id} value={s.id}>
-                {s.name}
+                话术 · {s.name}
               </option>
             ))}
           </select>

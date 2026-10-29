@@ -47,6 +47,21 @@ export async function POST(req: Request) {
           return actions.deleteContact(state, String(p.id ?? ""));
         case "deleteSequence":
           return actions.deleteSequence(state, String(p.id ?? ""));
+        case "saveTemplate":
+          return actions.saveTemplate(state, {
+            id: p.id ? String(p.id) : undefined,
+            name: String(p.name ?? ""),
+            subject: String(p.subject ?? ""),
+            body: String(p.body ?? ""),
+          });
+        case "deleteTemplate":
+          return actions.deleteTemplate(state, String(p.id ?? ""));
+        case "startAuto":
+          return actions.startAuto(state, {
+            templateId: String(p.templateId ?? ""),
+            mailboxIds: Array.isArray(p.mailboxIds) ? (p.mailboxIds as string[]) : [],
+            contactIds: Array.isArray(p.contactIds) ? (p.contactIds as string[]) : [],
+          });
         case "createContact":
           return actions.createContact(state, {
             email: String(p.email ?? ""),
