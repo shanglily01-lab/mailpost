@@ -17,7 +17,7 @@ export async function POST(req: Request) {
   }
 
   try {
-    ensureTicker();
+    await ensureTicker();
     const payload = await mutateState(async (state) => {
       const p = body.payload ?? {};
       switch (body.action) {
@@ -138,6 +138,7 @@ export async function POST(req: Request) {
       }
     });
 
+    await ensureTicker();
     return NextResponse.json(payload, { status: payload.ok ? 200 : 400 });
   } catch (err) {
     const message = err instanceof Error ? err.message : "服务器错误";

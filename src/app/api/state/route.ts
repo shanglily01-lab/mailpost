@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export async function GET() {
-  ensureTicker();
+  await ensureTicker();
   const state = loadState();
   const now = new Date();
   const mailboxes = state.mailboxes.map((m) => {
