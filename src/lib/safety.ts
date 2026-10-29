@@ -37,9 +37,8 @@ export function killReasons(state: AppState): string[] {
 }
 
 export function mailboxEffectiveCap(mailbox: Mailbox, now = new Date()): number {
-  const day = warmupDayNumber(mailbox.warmupStartedAt, now);
   if (mailbox.status === "paused") return 0;
-  return warmupDailyCap(day, mailbox.dailyCap);
+  return warmupDailyCap(warmupDayNumber(mailbox.warmupStartedAt, now), mailbox.dailyCap);
 }
 
 export function resetSentToday(mailbox: Mailbox, now = new Date()): Mailbox {

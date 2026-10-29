@@ -1,4 +1,5 @@
 import { processQueue } from "./actions";
+import { canLiveSend } from "./send";
 import { loadState, mutateState } from "./store";
 
 const INTERVAL_MS = 25_000;
@@ -17,7 +18,8 @@ export function ensureTicker() {
     const queued = (state.jobs || []).some((j) => j.status === "queued");
     if (!running || !queued) return;
     globalThis.__mailpostTicking = true;
-    mutateState((current) => processQueue(current, 1))
+    const senders = Math.max(1, (state.mailboxes || []).filter((box) => box.status !== "paused" && canLiveSend(box)).length);
+    mutateState((current) => processQueue(current, senders))
       .catch(() => undefined)
       .finally(() => {
         globalThis.__mailpostTicking = false;

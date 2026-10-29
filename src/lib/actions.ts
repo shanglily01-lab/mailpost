@@ -1,4 +1,4 @@
-import { BULK_BATCH_SIZE, IMPORT_ROW_CAP, MAX_DAILY_PER_MAILBOX, WARMUP_DAYS } from "./constants";
+import { BULK_BATCH_SIZE, DEFAULT_DAILY_CAP, IMPORT_ROW_CAP, MAX_DAILY_PER_MAILBOX, WARMUP_DAYS } from "./constants";
 import { checkDomainAuth } from "./dns";
 import { nid, nowISO, todayISO, token } from "./id";
 import {
@@ -141,7 +141,7 @@ export async function createMailbox(
     smtpSecure: false,
     smtpUser: email,
     smtpPass: input.smtpPass.trim(),
-    dailyCap: 40,
+    dailyCap: DEFAULT_DAILY_CAP,
     sentToday: 0,
     sentTodayDate: todayISO(),
     warmupStartedAt: nowISO(),
@@ -155,7 +155,7 @@ export async function createMailbox(
   state.mailboxes.push(row);
   if (!state.settings.companyName) state.settings.companyName = row.displayName;
   pushLog(state, "ok", "已添加邮箱", email);
-  return { ok: true, message: `已接入 ${email}，SMTP 验证通过。前 3 天每天最多 5 封。写信页请选中这个邮箱再发。` };
+  return { ok: true, message: `已接入 ${email}，SMTP 验证通过。每个邮箱每天最多 ${MAX_DAILY_PER_MAILBOX} 封。写信页请选中这个邮箱再发。` };
 }
 
 export async function updateMailbox(
@@ -629,12 +629,27 @@ function releaseUnsentFromOtherBlasts(state: AppState, contactIds: string[]) {
   }
 }
 
+function senderPool(state: AppState, now: Date): Mailbox[] {
+  const ready: Mailbox[] = [];
+  for (const box of state.mailboxes) {
+    if (box.status === "paused" || !canLiveSend(box)) continue;
+    const reset = resetSentToday(box, now);
+    Object.assign(box, reset);
+    const cap = mailboxEffectiveCap(box, now);
+    if (cap <= 0 || box.sentToday >= cap) continue;
+    ready.push(box);
+  }
+  ready.sort((a, b) => a.sentToday - b.sentToday || a.email.localeCompare(b.email));
+  return ready;
+}
+
 function enqueueBulkWave(state: AppState, campaign: Campaign): number {
   if (campaign.status !== "running" || !isBulkCampaign(campaign)) return 0;
   if (state.jobs.some((j) => j.campaignId === campaign.id && j.status === "queued")) return 0;
   const delivered = emailsWithStatus(state, new Set(["sent", "bounced", "replied"]));
   const seen = new Set(state.jobs.filter((j) => j.campaignId === campaign.id).map((j) => j.contactId));
-  const mailboxIds = campaign.mailboxIds.filter((id) => state.mailboxes.some((m) => m.id === id));
+  const pool = senderPool(state, new Date());
+  const mailboxIds = pool.length ? pool.map((box) => box.id) : campaign.mailboxIds.filter((id) => state.mailboxes.some((m) => m.id === id));
   if (!mailboxIds.length) return 0;
   const alreadyQueued = state.jobs.filter(
     (job) => job.campaignId === campaign.id && (job.status === "queued" || job.status === "sent"),
@@ -763,7 +778,7 @@ export async function startBulk(
     id: nid(),
     name: input.name?.trim() || subject.slice(0, 24) || "群发",
     sequenceId: "",
-    mailboxIds: [mailbox0.id],
+    mailboxIds: senderPool(state, now).map((box) => box.id).concat(mailbox0.id).filter((id, index, all) => all.indexOf(id) === index),
     contactIds: sendable.map((c) => c.id),
     status: "running",
     killReason: "",
@@ -788,7 +803,7 @@ export async function startBulk(
   const remain = state.jobs.filter((j) => j.campaignId === campaign.id && j.status === "queued").length;
   return {
     ok: true,
-    message: `已开始，本批 ${queuedNow} 个。${skipNote}约每 25 秒一封，今天额度用完就停，第二天接着发完这一批。${tick.message ?? ""}剩余排队 ${remain}。`,
+    message: `已开始，本批 ${queuedNow} 个。${skipNote}有额度的 Gmail 会轮流自动发。${tick.message ?? ""}剩余排队 ${remain}。`,
     data: { id: campaign.id, queued: queuedNow, skipped: skipped.length, todayLeft: left },
   };
 }
@@ -887,9 +902,9 @@ export async function processQueue(state: AppState, limit = 8): Promise<ActionRe
   for (const job of due) {
     if (sent >= limit) break;
     const campaign = state.campaigns.find((c) => c.id === job.campaignId);
-    const mailbox0 = state.mailboxes.find((m) => m.id === job.mailboxId);
+    let mailbox0 = state.mailboxes.find((m) => m.id === job.mailboxId);
     const contact = state.contacts.find((c) => c.id === job.contactId);
-    if (!campaign || !mailbox0 || !contact) {
+    if (!campaign || !contact) {
       job.status = "skipped";
       job.blockReason = "数据缺失";
       continue;
@@ -898,6 +913,17 @@ export async function processQueue(state: AppState, limit = 8): Promise<ActionRe
     if (campaign.status !== "running") {
       job.status = "skipped";
       job.blockReason = "活动未运行";
+      continue;
+    }
+    if (isBulkCampaign(campaign)) {
+      const sender = senderPool(state, now)[0];
+      if (!sender) continue;
+      mailbox0 = sender;
+      job.mailboxId = sender.id;
+    }
+    if (!mailbox0) {
+      job.status = "skipped";
+      job.blockReason = "数据缺失";
       continue;
     }
     const mailbox = resetSentToday(mailbox0, now);
@@ -1088,7 +1114,7 @@ export async function sendOnce(
 
   const cap = mailboxEffectiveCap(mailbox0, now);
   if (cap <= 0 || mailbox0.sentToday >= cap) {
-    return { ok: false, error: `今日额度已用完（${mailbox0.sentToday}/${cap}）。养号期每天只能发几封。` };
+    return { ok: false, error: `今日额度已用完（${mailbox0.sentToday}/${cap}）。每个邮箱每天最多 ${cap} 封。` };
   }
 
   let contact = state.contacts.find((c) => c.email === to);

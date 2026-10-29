@@ -181,7 +181,7 @@ export default function BlastPage() {
       <PageHead
         kicker="02 / 群发"
         title="按顺序一批批发"
-        desc="手动群发每批最多 20 个，发完剩下的还在右边。点「自动发」选一个模板，还没发过的邮箱每人一封，全部发件 Gmail 轮流发。已经发过的不会再发。"
+        desc="排队的信会自动发，并在所有还有今日额度的 Gmail 之间轮换。手动群发每批最多 20 个。已经发过的不会再发。"
       />
       {error ? <Banner kind="danger">{error}</Banner> : null}
       {notice ? <Banner kind="ok">{notice}</Banner> : null}
